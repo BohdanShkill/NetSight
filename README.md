@@ -15,7 +15,7 @@
 * Erkennung von SYN-Flood-Angriffen und Port-Scans in Echtzeit
 * REST-API zum Abrufen von Statistiken
 
-##  Стек
+##  Stack
 * **C++17**
 * **CMake**
 * **libpcap / Npcap**
