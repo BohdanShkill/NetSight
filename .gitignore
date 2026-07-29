@@ -1,5 +1,45 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Linker & Debugger Files
+*.ilk
+*.pdb
+*.dwo
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+*.so.*
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Build & Output directories
+build/
+Build/
+build-*/
 out/
 bin/
+
 # CMake generated files
 CMakeFiles/
 CMakeCache.txt
@@ -9,17 +49,21 @@ install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
 _deps/
+
 # Test output & cache
 Testing/
 .cache/
+
 # Temporary files & Logs
 *.tmp
 *.log
 *.bak
 *.swp
 *~
+
 # Package Managers
 vcpkg_installed/
+
 # OS specific files
 .DS_Store
 .DS_Store?
@@ -28,6 +72,7 @@ vcpkg_installed/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
 # IDEs and Editors
 .vs/
 *.user
