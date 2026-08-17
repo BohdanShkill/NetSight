@@ -1,7 +1,9 @@
-add_executable(netsight_tests main_test.cpp)
+include(GoogleTest)
 
-target_link_libraries(netsight_tests PRIVATE netsight_warnings)
+function(netsight_add_test test_name source_file)
+        add_executable(${test_name} ${source_file})
+        target_link_libraries(${test_name} PRIVATE netsight_warnings GTest::gtest_main)
+        gtest_discover_tests(${test_name} DISCOVERY_MODE PRE_TEST)
+endfunction()
 
-target_include_directories(netsight_tests PRIVATE ${CMAKE_SOURCE_DIR}/include)
-
-add_test(NAME netsight_tests COMMAND netsight_tests)
+netsight_add_test(smoke test_smoke.cpp)
