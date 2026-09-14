@@ -1,0 +1,29 @@
+name: NetSight CI
+on: 
+    push:
+        branches: [main]
+    pull_request: 
+        branches: [main]
+
+jobs:
+    build-and-test:
+        strategy: 
+            fail-fast: false
+            matrix: 
+                os: [ubuntu-latest, windows-latest]
+                build_type: [Debug]
+        runs-on: ${{matrix.os}}
+        steps: 
+            - uses: actions/checkout@v4
+            - if: runner.os == 'Linux'
+              run: sudo apt-get update && sudo apt-get install -y libpcap-dev
+            - if: runner.os == 'Windows'
+              run: |
+                Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.16.zip" -OutFile "npcap-sdk.zip"
+                Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "C:\npcap-sdk"
+            - if: runner.os == 'Linux'
+              run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+            - if: runner.os == 'Windows'
+              run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DNPCAP_SDK_DIR="C:/npcap-sdk"
+            - run: cmake --build build --config Debug
+            - run: ctest --test-dir build --output-on-failure -C Debug
