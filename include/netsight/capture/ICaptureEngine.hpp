@@ -7,6 +7,30 @@
 #include "netsight/core/Types.hpp"
 
 namespace netsight {
+    
+    class ICaptureEngine
+    {
+    public:
+        virtual ~ICaptureEngine() = default;
+
+        ICaptureEngine(const ICaptureEngine&) = default;
+        ICaptureEngine& operator=(const ICaptureEngine&) = delete;
+
+        ICaptureEngine(ICaptureEngine&&) = default;
+        ICaptureEngine& operator=(ICaptureEngine&&) = default;
+
+        ICaptureEngine() = default;
+
+        virtual std::vector<NetworkInterface> list_interfaces() = 0;
+        virtual bool is_running() const = 0;
+        virtual bool open(const std::string& name,const CaptureConfig& config) = 0;
+        virtual bool set_filter(const std::string& bpf_expression) = 0;
+        virtual bool start(PacketCallBack callback) = 0;
+        virtual void stop() = 0;
+        virtual std::string get_last_error() const = 0;
+    };
+    
+    
     struct NetworkInterface
     {
         std::string name;
@@ -23,5 +47,5 @@ namespace netsight {
         std::string bpf_filter = "";
     };
     using PacketCallBack = std::function<void(RawPacket)>;
-    
+       
 }
