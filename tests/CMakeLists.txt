@@ -9,3 +9,4 @@ endfunction()
 
 netsight_add_test(smoke test_smoke.cpp)
 netsight_add_test(types test_core_types.cpp)
+netsight_add_test(capture_interface test_capture_interface.cpp)
