@@ -32,7 +32,7 @@ public:
     }
 
     std::vector<netsight::NetworkInterface> list_interfaces() override{
-        return std::vector<netsight::NetworkInterface>{};
+        return {netsight::NetworkInterface{"eth0"}};
     }
 
     bool open(const std::string&, const netsight::CaptureConfig&) override{
@@ -55,6 +55,7 @@ TEST(CaptureInterfaceTest, EngineLifecycle){
     MockCaptureEngine engine;
     bool packet_received = false;
     EXPECT_EQ(engine.is_running(), false);
+    EXPECT_TRUE(engine.open("eth0", netsight::CaptureConfig{}));
     EXPECT_TRUE(engine.start([&packet_received](const netsight::RawPacket&){
         packet_received = true;
     }));
