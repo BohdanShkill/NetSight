@@ -42,9 +42,9 @@ namespace netsight {
 
         virtual std::vector<NetworkInterface> list_interfaces() = 0;
         virtual bool is_running() const = 0;
-        virtual bool open(const std::string& name,const CaptureConfig& config) = 0;
-        virtual bool set_filter(const std::string& bpf_expression) = 0;
-        virtual bool start(PacketCallback callback) = 0;
+        virtual bool open(const std::string&, const CaptureConfig&) = 0;
+        virtual bool set_filter(const std::string&) = 0;
+        virtual bool start(PacketCallback) = 0;
         virtual void stop() = 0;
         virtual std::string get_last_error() const = 0;
     };
