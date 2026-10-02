@@ -32,7 +32,7 @@ public:
     }
 
     std::vector<netsight::NetworkInterface> list_interfaces() override{
-        return {netsight::NetworkInterface{"eth0"}};
+        return {netsight::NetworkInterface{"eth0","",""}};
     }
 
     bool open(const std::string&, const netsight::CaptureConfig&) override{
