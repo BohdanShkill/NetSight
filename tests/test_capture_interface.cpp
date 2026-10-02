@@ -32,10 +32,10 @@ public:
     }
 
     std::vector<netsight::NetworkInterface> list_interfaces() override{
-        return std::vector<netsight::NetworkInterface>{};
+        return {netsight::NetworkInterface{"eth0","",""}};
     }
 
-    bool open(const std::string& name,const netsight::CaptureConfig& config) override{
+    bool open(const std::string&, const netsight::CaptureConfig&) override{
         if (should_fail_open){
             last_error_ = "Failed to open interface";
             return false;
@@ -44,7 +44,7 @@ public:
         return true;
     }
 
-    bool set_filter(const std::string& bpf_expression) override{
+    bool set_filter(const std::string&) override{
         return true; 
     }
 
@@ -55,6 +55,7 @@ TEST(CaptureInterfaceTest, EngineLifecycle){
     MockCaptureEngine engine;
     bool packet_received = false;
     EXPECT_EQ(engine.is_running(), false);
+    EXPECT_TRUE(engine.open("eth0", netsight::CaptureConfig{}));
     EXPECT_TRUE(engine.start([&packet_received](const netsight::RawPacket&){
         packet_received = true;
     }));
@@ -69,7 +70,9 @@ TEST(CaptureInterfaceTest, CaptureConfig){
     EXPECT_EQ(config.snapshot_lenght, 65535);
     EXPECT_EQ(config.primiscuous_mode, true);
     EXPECT_EQ(config.read_timeout_ms, 1000);
-    EXPECT_EQ(config.bpf_filter, config.bpf_filter.empty());
+    EXPECT_TRUE(config.bpf_filter.empty());
+
+    
 }
 
 TEST(CaptureInterfaceTest, ErrorHandling){
