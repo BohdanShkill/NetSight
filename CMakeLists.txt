@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.20)
 
 project(NetSight VERSION 0.1.0 LANGUAGES CXX)
 
+if(PROJECT_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    message(FATAL_ERROR "Use out-of-source build: cmake -S . -B build")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -14,36 +18,36 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(netsight_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 find_package(PCAP REQUIRED)
 
-add_subdirectory(src)
-
-enable_testing()
-add_subdirectory(tests)
 
 include(FetchContent)
 set(gtest_force_shared_crt ON)
 FetchContent_Declare(googletest
-                     GIT_REPOSITORY https://github.com/google/googletest.git
-                     GIT_TAG v1.15.2
-                     GIT_SHALLOW TRUE
+GIT_REPOSITORY https://github.com/google/googletest.git
+GIT_TAG v1.15.2
+GIT_SHALLOW TRUE
 )
 
 set(JSON_BuildTests OFF)
 
 FetchContent_Declare(nlohmann_json
-                     GIT_REPOSITORY https://github.com/nlohmann/json.git
-                     GIT_TAG v3.11.3
-                     GIT_SHALLOW TRUE
+GIT_REPOSITORY https://github.com/nlohmann/json.git
+GIT_TAG v3.11.3
+GIT_SHALLOW TRUE
 )
 
 set(HTTPLIB_COMPILE OFF)
 
 FetchContent_Declare(httplib
-                     GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-                     GIT_TAG v0.18.5
-                     GIT_SHALLOW TRUE                
+GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+GIT_TAG v0.18.5
+GIT_SHALLOW TRUE                
 )
 
 FetchContent_MakeAvailable(googletest nlohmann_json httplib)
+add_subdirectory(src)
+#add_subdirectory(apps)
+enable_testing()
+add_subdirectory(tests)

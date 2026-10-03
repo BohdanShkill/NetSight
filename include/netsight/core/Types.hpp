@@ -38,6 +38,18 @@ namespace netsight {
         Other
     };
 
+    enum class LinkType : std::uint16_t {
+        Null = 0,
+        Ethernet = 1,
+        Loop = 108,
+        LinuxSll = 113,
+        Unknown = 65535
+    };
+
+    std::string to_string(ProtocolType protocol);
+    std::string to_string(LinkType link_type);
+
+
     inline std::uint16_t net_to_host_16(std::uint16_t value){
 #if defined(_MSC_VER)
         return _byteswap_ushort(value);
@@ -76,26 +88,6 @@ namespace netsight {
 #else   
         return value;
 #endif
-    }
-
-    std::string protocol_to_string(ProtocolType protocol){
-        switch (protocol)
-        {
-        case ProtocolType::TCP:
-            return "TCP";
-            break;
-        case ProtocolType::UDP:
-            return "UDP";
-            break;
-        case ProtocolType::ICMP:
-            return "ICMP";
-            break;
-        case ProtocolType::ICMPv6:
-            return "ICMPv6";
-            break;
-        default:
-            return "Unknown";
-        }
     }
 
 }
