@@ -24,8 +24,8 @@ namespace netsight {
         }
 
         explicit RawPacket(Timestamp ts, const std::uint8_t* bytes, std::size_t cap_len, std::uint32_t orig_len):
-        data(bytes != nullptr ? ByteBuffer(bytes, bytes + cap_len) : ByteBuffer()),
         timestamp(ts),
+        data(bytes != nullptr ? ByteBuffer(bytes, bytes + cap_len) : ByteBuffer()),
         original_length(orig_len)
         {}
     };
