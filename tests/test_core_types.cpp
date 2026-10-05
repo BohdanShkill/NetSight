@@ -62,13 +62,13 @@ TEST(RawPacketTest, MoveSemantics) {
 }
 
 TEST(ByteOrderTest, NetToHost16FromMemory) {
-    const std::uint8_t raw_bytes[2] = {0x08, 0x00}; // EtherType IPv4
+    const std::uint8_t raw_bytes[2] = {0x08, 0x00};
     std::uint16_t raw_word = 0;
     std::memcpy(&raw_word, raw_bytes, sizeof(raw_word));
     EXPECT_EQ(net_to_host_16(raw_word), 0x0800);
 }
 TEST(ByteOrderTest, NetToHost32FromMemory) {
-    const std::uint8_t raw_bytes[4] = {0xC0, 0xA8, 0x01, 0x01}; // 192.168.1.1
+    const std::uint8_t raw_bytes[4] = {0xC0, 0xA8, 0x01, 0x01};
     std::uint32_t raw_word = 0;
     std::memcpy(&raw_word, raw_bytes, sizeof(raw_word));
     EXPECT_EQ(net_to_host_32(raw_word), 0xC0A80101);
