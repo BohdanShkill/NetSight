@@ -2,9 +2,11 @@
 
 namespace netsight{
 
-    std::string to_string(ProtocolType protocol){
-        switch (protocol)
+    std::string to_string(ProtocolType proto) {
+        switch (proto)
         {
+        case ProtocolType::Unknown:
+            return "Unknown";
         case ProtocolType::TCP:
             return "TCP";
         case ProtocolType::UDP:
@@ -13,13 +15,14 @@ namespace netsight{
             return "ICMP";
         case ProtocolType::ICMPv6:
             return "ICMPv6";
-        default:
-            return "Unknown";
+        case ProtocolType::Other:
+            return "Other";  
         }
+        return "Unknown";
     }
 
-    std::string to_string(LinkType link_type){
-        switch (link_type)
+    std::string to_string(LinkType link) {
+        switch (link)
         {
         case LinkType::Null:
             return "Null";

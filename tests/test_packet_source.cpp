@@ -1,128 +1,154 @@
 #include <gtest/gtest.h>
-#include "netsight/capture/ICaptureEngine.hpp"
+#include <chrono>
+#include <future>
+#include <memory>
+#include <stdexcept>
+#include <vector>
 
-class MockCaptureEngine : public netsight::ICaptureEngine
-{
-private:
-    bool running_{false};
-    std::string last_error_{};
-    bool opened_{false};
-public:
-    bool start(netsight::PacketCallback callback) override{
-        if (!opened_){
-            last_error_ = "Engine not opened";
-            return false;
-        }
-        const netsight::Byte dummy[1] = {0};
-        callback(netsight::RawPacket{dummy, 1, 1});
-        running_ = true;
-        return true;
-    }
-    
-    bool is_running() const override {
-        return running_;
-    }
-    
-    std::string get_last_error() const override {
-        return last_error_;
-    }
+#include "netsight/core/Types.hpp"
+#include "netsight/source/IPacketSource.hpp"
+#include "support/FakePacketSource.hpp"
 
-    void stop() override{
-        running_ = false;
-    }
+using namespace netsight;
+using namespace std::chrono_literals;
 
-    std::vector<netsight::NetworkInterface> list_interfaces() override{
-        return {netsight::NetworkInterface{"eth0","",""}};
-    }
+namespace {
 
-    bool open(const std::string&, const netsight::CaptureConfig&) override{
-        if (should_fail_open){
-            last_error_ = "Failed to open interface";
-            return false;
-        }
-        opened_ = true;
-        return true;
-    }
-
-    bool set_filter(const std::string&) override{
-        return true; 
-    }
-
-    bool should_fail_open{false};
-};
-
-TEST(CaptureInterfaceTest, EngineLifecycle){
-    MockCaptureEngine engine;
-    bool packet_received = false;
-    EXPECT_EQ(engine.is_running(), false);
-    EXPECT_TRUE(engine.open("eth0", netsight::CaptureConfig{}));
-    EXPECT_TRUE(engine.start([&packet_received](const netsight::RawPacket&){
-        packet_received = true;
-    }));
-    EXPECT_EQ(packet_received, true);
-    EXPECT_EQ(engine.is_running(), true);
-    engine.stop();
-    EXPECT_EQ(engine.is_running(), false);
+RawPacket make_test_packet(std::uint8_t id) {
+    const std::vector<Byte> bytes = {id, 0xAA, 0xBB};
+    return RawPacket(Timestamp{id * 1000}, bytes.data(), bytes.size(), static_cast<std::uint32_t>(bytes.size()));
 }
 
-TEST(CaptureInterfaceTest, CaptureConfig){
-    netsight::CaptureConfig config;
-    EXPECT_EQ(config.snapshot_lenght, 65535);
-    EXPECT_EQ(config.primiscuous_mode, true);
-    EXPECT_EQ(config.read_timeout_ms, 1000);
-    EXPECT_TRUE(config.bpf_filter.empty());
+} 
 
-    
+TEST(PacketSourceContractTest, OrderedDeliveryAndCompletion) {
+    const std::vector<RawPacket> input = {
+        make_test_packet(1),
+        make_test_packet(2),
+        make_test_packet(3)
+    };
+
+    std::unique_ptr<IPacketSource> source =
+        std::make_unique<FakePacketSource>(input, LinkType::Ethernet);
+
+    std::vector<std::uint8_t> received_ids;
+    std::promise<StopReason> completion_promise;
+    auto completion_future = completion_promise.get_future();
+
+    const bool started = source->start(
+        [&received_ids](RawPacket pkt) {
+            if (!pkt.data.empty()) {
+                received_ids.push_back(pkt.data[0]);
+            }
+        },
+        [&completion_promise](StopReason reason) {
+            completion_promise.set_value(reason);
+        });
+
+    ASSERT_TRUE(started);
+
+    ASSERT_EQ(completion_future.wait_for(5s), std::future_status::ready);
+    EXPECT_EQ(completion_future.get(), StopReason::EndOfStream);
+
+    const std::vector<std::uint8_t> expected_ids = {1, 2, 3};
+    EXPECT_EQ(received_ids, expected_ids);
+    EXPECT_FALSE(source->is_running());
 }
 
-TEST(CaptureInterfaceTest, ErrorHandling){
-    MockCaptureEngine engine;
-    engine.should_fail_open = true;
-    netsight::CaptureConfig config;
-    EXPECT_FALSE(engine.open("eth0", config));
-    EXPECT_EQ(engine.get_last_error(), "Failed to open interface");
-    
+TEST(PacketSourceContractTest, IdempotentStop) {
+    std::unique_ptr<IPacketSource> source =
+        std::make_unique<FakePacketSource>(std::vector<RawPacket>{}, LinkType::Ethernet, std::nullopt, true);
+
+    std::promise<StopReason> completion_promise;
+    auto completion_future = completion_promise.get_future();
+
+    ASSERT_TRUE(source->start([](RawPacket) {},
+                              [&completion_promise](StopReason reason) {
+                                  completion_promise.set_value(reason);
+                              }));
+
+    EXPECT_TRUE(source->is_running());
+
+    source->stop();
+    source->stop();
+
+    ASSERT_EQ(completion_future.wait_for(5s), std::future_status::ready);
+    EXPECT_EQ(completion_future.get(), StopReason::StoppedByUser);
+    EXPECT_FALSE(source->is_running());
 }
 
-TEST(CaptureInterfaceTest, NetworkInterfaceStateRetention){
-    netsight::NetworkInterface interface;
-    interface.name = "eth0";
-    interface.description = "Ethernet Interface";
-    interface.ipv4_address = "192.168.1.1";
-    interface.is_loopback = false;
-    interface.up = true;
+TEST(PacketSourceContractTest, StopInsideCallbackDeadlockImmunity) {
+    const std::vector<RawPacket> input = {
+        make_test_packet(1),
+        make_test_packet(2),
+        make_test_packet(3)
+    };
 
-    EXPECT_EQ(interface.name, "eth0");
-    EXPECT_EQ(interface.description, "Ethernet Interface");
-    EXPECT_EQ(interface.ipv4_address, "192.168.1.1");
-    EXPECT_FALSE(interface.is_loopback);
-    EXPECT_TRUE(interface.up);
+    auto source = std::make_unique<FakePacketSource>(input, LinkType::Ethernet, std::nullopt, true);
+    IPacketSource* raw_source = source.get();
+
+    std::promise<StopReason> completion_promise;
+    auto completion_future = completion_promise.get_future();
+    std::size_t packets_handled = 0;
+
+    const bool started = source->start(
+        [raw_source, &packets_handled](RawPacket) {
+            ++packets_handled;
+            raw_source->stop();
+        },
+        [&completion_promise](StopReason reason) {
+            completion_promise.set_value(reason);
+        });
+
+    ASSERT_TRUE(started);
+
+    ASSERT_EQ(completion_future.wait_for(5s), std::future_status::ready);
+    EXPECT_EQ(completion_future.get(), StopReason::StoppedByUser);
+    EXPECT_EQ(packets_handled, 1u);
+    EXPECT_FALSE(source->is_running());
 }
 
-TEST(CaptureInterfaceTest, PolimorphicLifecycle){
-    std::unique_ptr<netsight::ICaptureEngine> engine = std::make_unique<MockCaptureEngine>();
-    const auto interfaces = engine -> list_interfaces();
-    EXPECT_FALSE(interfaces.empty());
-    netsight::CaptureConfig config;
-    ASSERT_TRUE(engine->open(interfaces.front().name, config));
-    bool packet_received = false;
-    engine->start([&packet_received](const netsight::RawPacket&){
-        packet_received = true;
-    });
-    EXPECT_TRUE(engine->is_running());
-    EXPECT_TRUE(packet_received);
-    engine->stop();
-    EXPECT_FALSE(engine->is_running());
+TEST(PacketSourceContractTest, ExceptionInCallbackHandledGracefully) {
+    const std::vector<RawPacket> input = {make_test_packet(1)};
 
+    std::unique_ptr<IPacketSource> source =
+        std::make_unique<FakePacketSource>(input, LinkType::Ethernet);
+
+    std::promise<StopReason> completion_promise;
+    auto completion_future = completion_promise.get_future();
+
+    const bool started = source->start(
+        [](RawPacket) {
+            throw std::runtime_error("Simulated consumer failure");
+        },
+        [&completion_promise](StopReason reason) {
+            completion_promise.set_value(reason);
+        });
+
+    ASSERT_TRUE(started);
+
+    ASSERT_EQ(completion_future.wait_for(5s), std::future_status::ready);
+    EXPECT_EQ(completion_future.get(), StopReason::Error);
+    EXPECT_FALSE(source->is_running());
+    EXPECT_FALSE(source->last_error().empty());
 }
 
-TEST(CaptureInterfaceTest, StartBeforeOpen){
-    MockCaptureEngine engine;
-    bool callback_called = false;
-    EXPECT_FALSE(engine.start([&callback_called](const netsight::RawPacket&){
-        callback_called = true;
-     }));
-    EXPECT_EQ(engine.get_last_error(), "Engine not opened");
-    EXPECT_FALSE(callback_called);
-    EXPECT_FALSE(engine.is_running());
+TEST(PacketSourceContractTest, ValidationAndSinglePassLifecycle) {
+    std::unique_ptr<IPacketSource> source =
+        std::make_unique<FakePacketSource>(std::vector<RawPacket>{}, LinkType::Ethernet);
+
+    EXPECT_FALSE(source->start(nullptr, [](StopReason) {}));
+    EXPECT_FALSE(source->start([](RawPacket) {}, nullptr));
+
+    std::promise<StopReason> completion_promise;
+    auto completion_future = completion_promise.get_future();
+
+    ASSERT_TRUE(source->start([](RawPacket) {},
+                              [&completion_promise](StopReason reason) {
+                                  completion_promise.set_value(reason);
+                              }));
+
+    ASSERT_EQ(completion_future.wait_for(5s), std::future_status::ready);
+
+    EXPECT_FALSE(source->start([](RawPacket) {}, [](StopReason) {}));
 }

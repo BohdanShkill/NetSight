@@ -48,6 +48,6 @@ GIT_SHALLOW TRUE
 
 FetchContent_MakeAvailable(googletest nlohmann_json httplib)
 add_subdirectory(src)
-#add_subdirectory(apps)
+add_subdirectory(apps)
 enable_testing()
 add_subdirectory(tests)
