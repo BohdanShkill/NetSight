@@ -15,7 +15,7 @@
 ---
 
 > [!NOTE]
-> **Project Status: Under Active Development (Milestone 2)**  
+> **Project Status: Under Active Development**  
 > Core architectural abstractions, cross-platform build system, and automated CI pipelines are implemented. Packet capture engines and UB-free zero-copy header parsers are currently in progress.
 
 ---
