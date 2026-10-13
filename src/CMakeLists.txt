@@ -1,5 +1,6 @@
 add_library(netsight_core STATIC 
     core/Types.cpp
+    source/ThreadedPacketSource.cpp
 )
 
 target_include_directories(netsight_core PUBLIC 
