@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "netsight/capture/CaptureConfig.hpp"
 
-TEST(CaptureConfigTest, DefaultInitialization){
+TEST(CaptureConfigTest, DefaultInitialization) {
     netsight::CaptureConfig config;
     EXPECT_EQ(config.snapshot_length, 65535);
     EXPECT_TRUE(config.promiscuous_mode);
