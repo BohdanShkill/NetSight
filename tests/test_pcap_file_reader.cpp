@@ -303,3 +303,21 @@ TEST(PcapFileReaderTest, InvalidMicrosecondFractionRejected) {
     EXPECT_EQ(result.reason, StopReason::Error);
     EXPECT_NE(result.error.find("invalid timestamp fraction"), std::string::npos);
 }
+
+TEST(PcapFileReaderTest, GoldenFileFromTcpdump) {
+    std::filesystem::path golden_path = 
+        std::filesystem::path(NETSIGHT_TEST_DATA_DIR) / "lo_tcp.pcap";
+    std::string error;
+    auto reader = PcapFileReader::open(golden_path, error);
+    ASSERT_NE(reader, nullptr) << error;
+    EXPECT_EQ(reader->link_type(), LinkType::Ethernet);
+    EXPECT_EQ(reader->snaplen(), 262144u);
+    auto result = read_all(*reader);
+    EXPECT_EQ(result.reason, StopReason::EndOfStream);
+    
+    ASSERT_EQ(result.packets.size(), 10u);
+
+    EXPECT_EQ(result.packets[0].timestamp.count(), 1792005506243801LL);
+    EXPECT_EQ(result.packets[0].captured_length(), 74u);
+    EXPECT_EQ(result.packets[0].original_length, 74u);
+}
