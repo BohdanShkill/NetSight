@@ -152,3 +152,38 @@ TEST(PacketSourceContractTest, ValidationAndSinglePassLifecycle) {
 
     EXPECT_FALSE(source->start([](RawPacket) {}, [](StopReason) {}));
 }
+
+TEST(PacketSourceContractTest, IsRunningTrueUntilCompletion) {
+    const std::vector<RawPacket> input = {
+        make_test_packet(1),
+        make_test_packet(2)
+    };
+
+    auto source = std::make_unique<FakePacketSource>(input, LinkType::Ethernet);
+    IPacketSource* raw_source = source.get();
+
+    std::promise<StopReason> completion_promise;
+    auto completion_future = completion_promise.get_future();
+
+    bool was_running_during_completion = false;
+
+    const bool started = source->start(
+        [raw_source](RawPacket) {
+            raw_source->stop();
+        },
+        [raw_source, &was_running_during_completion, &completion_promise](StopReason reason) {
+            was_running_during_completion = raw_source->is_running();
+            completion_promise.set_value(reason);
+        });
+
+    ASSERT_TRUE(started);
+
+    ASSERT_EQ(completion_future.wait_for(5s), std::future_status::ready);
+    EXPECT_EQ(completion_future.get(), StopReason::StoppedByUser);
+
+    EXPECT_TRUE(was_running_during_completion);
+
+    source->stop();
+    EXPECT_FALSE(source->is_running());
+}
+
