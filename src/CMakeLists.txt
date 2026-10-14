@@ -1,5 +1,7 @@
 add_library(netsight_core STATIC 
     core/Types.cpp
+    source/ThreadedPacketSource.cpp
+    source/PcapFileReader.cpp
 )
 
 target_include_directories(netsight_core PUBLIC 
