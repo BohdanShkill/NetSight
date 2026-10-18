@@ -29,6 +29,12 @@ target_link_libraries(netsight_capture PRIVATE
     netsight_warnings PCAP::PCAP
 )
 
+find_package(Threads REQUIRED)
+
+target_link_libraries(netsight_core PUBLIC
+    Threads::Threads
+)
+
 if(WIN32)
     target_compile_definitions(netsight_capture PRIVATE
     WIN32_LEAN_AND_MEAN

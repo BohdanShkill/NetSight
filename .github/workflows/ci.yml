@@ -19,8 +19,8 @@ jobs:
               run: sudo apt-get update && sudo apt-get install -y libpcap-dev
             - if: runner.os == 'Windows'
               run: |
-                Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.16.zip" -OutFile "npcap-sdk.zip"
-                Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "C:\npcap-sdk"
+                curl.exe -k -L -o "npcap-sdk.zip" "https://npcap.com/dist/npcap-sdk-1.16.zip"
+                Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "C:\npcap-sdk" -Force
             - if: runner.os == 'Linux'
               run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
             - if: runner.os == 'Windows'
