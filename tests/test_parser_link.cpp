@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 #include <type_traits>
+#include <filesystem>
 
 #include "netsight/parser/PacketParser.hpp"
 #include "support/PacketBuilder.hpp"
+#include "netsight/source/PcapFileReader.hpp"
+#include "support/ReadAll.hpp"
 
 using namespace netsight;
 using namespace netsight::test;
@@ -70,4 +73,168 @@ TEST(ParserLinkTest, MetadataSurvivesTruncation) {
     EXPECT_EQ(parsed.captured_length, 10u);
     EXPECT_EQ(parsed.timestamp, ts);
     EXPECT_EQ(parsed.link_type, LinkType::Ethernet);
+}
+
+TEST(ParserLinkTest, GoldenTcpdumpFileIsEthernetIPv4) {
+    const auto pcap_path = std::filesystem::path(NETSIGHT_TEST_DATA_DIR) / "lo_tcp.pcap";
+    std::string error;
+    auto reader = PcapFileReader::open(pcap_path, error);
+    ASSERT_NE(reader, nullptr) << error;
+    const auto result = read_all(*reader);
+    ASSERT_EQ(result.packets.size(), 10u);
+    for (const auto& raw : result.packets) {
+        const ParsedPacket p = parse_packet(raw, LinkType::Ethernet);
+        EXPECT_EQ(p.status, ParseStatus::Ok);
+        EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+        EXPECT_EQ(p.ether_type, 0x0800);
+        EXPECT_EQ(p.l3_offset, 14u);
+        EXPECT_EQ(p.vlan_count, 0u);
+    }
+}
+
+TEST(ParserLinkTest, EthernetIPv4) {
+    PacketBuilder b;
+    b.ethernet(0x0800).bytes(20);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+    EXPECT_EQ(p.ether_type, 0x0800);
+    EXPECT_EQ(p.l3_offset, 14u);
+}
+
+TEST(ParserLinkTest, EthernetIPv6) {
+    PacketBuilder b;
+    b.ethernet(0x86DD).bytes(40);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv6);
+    EXPECT_EQ(p.ether_type, 0x86DD);
+    EXPECT_EQ(p.l3_offset, 14u);
+}
+
+TEST(ParserLinkTest, EthernetArp) {
+    PacketBuilder b;
+    b.ethernet(0x0806).bytes(28);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::Arp);
+    EXPECT_EQ(p.ether_type, 0x0806);
+    EXPECT_EQ(p.l3_offset, 14u);
+}
+
+TEST(ParserLinkTest, UnknownEtherTypeIsOther) {
+    PacketBuilder b;
+    b.ethernet(0x88CC).bytes(10);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::Other);
+    EXPECT_EQ(p.ether_type, 0x88CC);
+    EXPECT_EQ(p.l3_offset, 14u);
+}
+
+TEST(ParserLinkTest, Ieee8023LengthFieldIsOther) {
+    PacketBuilder b;
+    b.ethernet(0x05DC).bytes(10);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::Other);
+    EXPECT_EQ(p.ether_type, 0x05DC);
+    EXPECT_EQ(p.l3_offset, 14u);
+}
+
+TEST(ParserLinkTest, TruncatedEthernetHeader) {
+    PacketBuilder b;
+    b.ethernet(0x0800);
+    RawPacket raw = b.build();
+    raw.data.resize(13);
+    const ParsedPacket p = parse_packet(raw, LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Truncated);
+    EXPECT_EQ(p.network, NetworkProtocol::None);
+    EXPECT_EQ(p.captured_length, 13u);
+}
+
+TEST(ParserLinkTest, SingleDot1QTag) {
+    PacketBuilder b;
+    b.ethernet(0x8100)
+     .vlan(100, 0x0800)
+     .bytes(20);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+    EXPECT_EQ(p.ether_type, 0x0800);
+    EXPECT_EQ(p.vlan_count, 1u);
+    EXPECT_EQ(p.vlan_ids[0], 100u);
+    EXPECT_EQ(p.l3_offset, 18u);
+}
+
+TEST(ParserLinkTest, QinQTwoTags) {
+    PacketBuilder b;
+    b.ethernet(0x88A8)
+     .vlan(10, 0x8100)
+     .vlan(20, 0x0800)
+     .bytes(20);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+    EXPECT_EQ(p.ether_type, 0x0800);
+    EXPECT_EQ(p.vlan_count, 2u);
+    EXPECT_EQ(p.vlan_ids[0], 10u);
+    EXPECT_EQ(p.vlan_ids[1], 20u);
+    EXPECT_EQ(p.l3_offset, 22u);
+}
+
+TEST(ParserLinkTest, LegacyQinQ9100) {
+    PacketBuilder b;
+    b.ethernet(0x9100)
+     .vlan(50, 0x0800)
+     .bytes(20);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+    EXPECT_EQ(p.vlan_count, 1u);
+    EXPECT_EQ(p.vlan_ids[0], 50u);
+    EXPECT_EQ(p.l3_offset, 18u);
+}
+
+TEST(ParserLinkTest, VidIgnoresPcpAndDei) {
+    PacketBuilder b;
+    b.ethernet(0x8100)
+     .u16_be(0xF00A)
+     .u16_be(0x0800)
+     .bytes(20);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+    EXPECT_EQ(p.vlan_count, 1u);
+    EXPECT_EQ(p.vlan_ids[0], 10u);
+    EXPECT_EQ(p.l3_offset, 18u);
+}
+
+TEST(ParserLinkTest, ThirdTagIsNotPeeled) {
+    PacketBuilder b;
+    b.ethernet(0x8100)
+     .vlan(1, 0x8100)
+     .vlan(2, 0x8100)
+     .vlan(3, 0x0800)
+     .bytes(20);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::Other);
+    EXPECT_EQ(p.ether_type, 0x8100);
+    EXPECT_EQ(p.vlan_count, 2u);
+    EXPECT_EQ(p.vlan_ids[0], 1u);
+    EXPECT_EQ(p.vlan_ids[1], 2u);
+    EXPECT_EQ(p.l3_offset, 22u);
+}
+
+TEST(ParserLinkTest, TruncatedInsideVlanTag) {
+    PacketBuilder b;
+    b.ethernet(0x8100)
+     .vlan(100, 0x0800);
+    RawPacket raw = b.build();
+    raw.data.resize(16);
+    const ParsedPacket p = parse_packet(raw, LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Truncated);
+    EXPECT_EQ(p.network, NetworkProtocol::None);
+    EXPECT_EQ(p.vlan_count, 0u);
 }
