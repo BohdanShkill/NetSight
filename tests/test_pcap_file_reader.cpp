@@ -11,6 +11,7 @@
 #include "netsight/source/PcapFileReader.hpp"
 #include "support/PcapWriter.hpp"
 #include "support/TempFile.hpp"
+#include "support/ReadAll.hpp"
 
 using namespace netsight;
 using namespace netsight::test;
@@ -21,31 +22,6 @@ namespace {
 RawPacket make_packet(std::uint8_t id, std::int64_t us) {
     const std::vector<Byte> bytes = {id, 0xAA, 0xBB};
     return RawPacket(Timestamp{us}, bytes.data(), bytes.size(), static_cast<std::uint32_t>(bytes.size()));
-}
-
-struct ReadResult {
-    std::vector<RawPacket> packets;
-    StopReason reason;
-    std::string error;
-};
-
-ReadResult read_all(PcapFileReader& reader) {
-    ReadResult res;
-    std::promise<StopReason> prom;
-    auto fut = prom.get_future();
-
-    reader.start(
-        [&res](RawPacket pkt) {
-            res.packets.push_back(std::move(pkt));
-        },
-        [&prom](StopReason r) {
-            prom.set_value(r);
-        });
-
-    EXPECT_EQ(fut.wait_for(5s), std::future_status::ready);
-    res.reason = fut.get();
-    res.error = reader.last_error();
-    return res;
 }
 
 void patch_file(const std::filesystem::path& path, std::size_t offset, const void* data, std::size_t size) {

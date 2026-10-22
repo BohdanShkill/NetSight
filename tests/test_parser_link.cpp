@@ -2,11 +2,29 @@
 #include <type_traits>
 
 #include "netsight/parser/PacketParser.hpp"
+#include "support/PacketBuilder.hpp"
 
 using namespace netsight;
+using namespace netsight::test;
 
 static_assert(std::is_trivially_copyable_v<ParsedPacket>,
               "ParsedPacket must be trivially copyable");
+
+TEST(ParserLinkTest, BuilderMatchesHandWrittenBytes) {
+    const std::vector<Byte> expected = {
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+        0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
+        0x81, 0x00,
+        0xA0, 0x64,
+        0x08, 0x00
+    };
+    PacketBuilder builder;
+    builder.ethernet(0x8100)
+           .vlan(100, 0x0800, /*pcp=*/5);
+    const RawPacket packet = builder.build();
+    EXPECT_EQ(packet.data, expected);
+    EXPECT_EQ(packet.captured_length(), 18u);
+}
 
 TEST(ParserLinkTest, UnknownLinkType) {
     const Timestamp ts{100};
