@@ -308,3 +308,48 @@ TEST(ParserLinkTest, NullTruncated) {
     EXPECT_EQ(p.status, ParseStatus::Truncated);
     EXPECT_EQ(p.network, NetworkProtocol::None);
 }
+
+TEST(ParserLinkTest, SllIPv4) {
+    PacketBuilder b;
+    b.sll(0x0800).bytes(20);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::LinuxSll);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+    EXPECT_EQ(p.ether_type, 0x0800);
+    EXPECT_EQ(p.l3_offset, 16u);
+}
+
+TEST(ParserLinkTest, SllWithVlan) {
+    PacketBuilder b;
+    b.sll(0x8100)
+     .vlan(50, 0x0800)
+     .bytes(20);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::LinuxSll);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+    EXPECT_EQ(p.ether_type, 0x0800);
+    EXPECT_EQ(p.vlan_count, 1u);
+    EXPECT_EQ(p.vlan_ids[0], 50u);
+    EXPECT_EQ(p.l3_offset, 20u);
+}
+
+TEST(ParserLinkTest, SllNonEtherTypeProtocolIsOther) {
+    PacketBuilder b;
+    b.sll(0x0004).bytes(10);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::LinuxSll);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::Other);
+    EXPECT_EQ(p.ether_type, 0x0004);
+    EXPECT_EQ(p.l3_offset, 16u);
+}
+
+TEST(ParserLinkTest, SllTruncated) {
+    PacketBuilder b;
+    b.sll(0x0800);
+    RawPacket raw = b.build();
+    raw.data.resize(15);
+    const ParsedPacket p = parse_packet(raw, LinkType::LinuxSll);
+    EXPECT_EQ(p.status, ParseStatus::Truncated);
+    EXPECT_EQ(p.network, NetworkProtocol::None);
+    EXPECT_EQ(p.captured_length, 15u);
+}

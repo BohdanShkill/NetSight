@@ -72,6 +72,12 @@ bool decode_null_or_loop(ByteReader& reader, uint16_t& out_ether_type, bool big_
     return true;
 }
 
+bool decode_sll(ByteReader& reader, uint16_t& out_ether_type) noexcept {
+    reader.skip(14);
+    out_ether_type = reader.u16_be();
+    return reader.ok();
+}
+
 }
 
 namespace netsight {
@@ -99,6 +105,7 @@ ParsedPacket parse_packet(const RawPacket& packet, LinkType link_type) noexcept 
             ok = decode_null_or_loop(reader, ether_type, true);
             break;
         case LinkType::LinuxSll:
+            ok = decode_sll(reader, ether_type);
             break;
         case LinkType::Unknown:
             out.status = ParseStatus::UnsupportedLinkType;
@@ -117,7 +124,7 @@ ParsedPacket parse_packet(const RawPacket& packet, LinkType link_type) noexcept 
         return out;
     }
 
-    if (link_type == LinkType::Ethernet) {
+    if (link_type == LinkType::Ethernet || link_type == LinkType::LinuxSll) {
         if (!peel_vlans(reader, ether_type, out)) {
             return out;
         }
