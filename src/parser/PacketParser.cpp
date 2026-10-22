@@ -41,6 +41,37 @@ bool peel_vlans(ByteReader& reader, uint16_t& ether_type, ParsedPacket& out) noe
     return true;
 }
 
+bool decode_null_or_loop(ByteReader& reader, uint16_t& out_ether_type, bool big_endian_only) noexcept {
+    if (reader.remaining() < 4) {
+        reader.skip(4);
+        return false;
+    }
+    uint32_t af = 0;
+    if (big_endian_only) {
+        af = reader.u32_be();
+    } else {
+        const ByteReader peek = reader;
+        const uint32_t af_le = reader.u32_le();
+        if ((af_le >> 16) != 0) {
+            ByteReader be_reader = peek;
+            af = be_reader.u32_be();
+        } else {
+            af = af_le;
+        }
+    }
+    if (!reader.ok()) {
+        return false;
+    }
+    if (af == 2) {
+        out_ether_type = 0x0800; // IPv4
+    } else if (af == 24 || af == 28 || af == 30) {
+        out_ether_type = 0x86DD; // IPv6
+    } else {
+        out_ether_type = 0;
+    }
+    return true;
+}
+
 }
 
 namespace netsight {
@@ -61,12 +92,14 @@ ParsedPacket parse_packet(const RawPacket& packet, LinkType link_type) noexcept 
         case LinkType::Ethernet:
             ok = decode_ethernet(reader, ether_type);
             break;
-
-        case LinkType::LinuxSll:
         case LinkType::Null:
-        case LinkType::Loop:
+            ok = decode_null_or_loop(reader, ether_type, false);
             break;
-
+        case LinkType::Loop:
+            ok = decode_null_or_loop(reader, ether_type, true);
+            break;
+        case LinkType::LinuxSll:
+            break;
         case LinkType::Unknown:
             out.status = ParseStatus::UnsupportedLinkType;
             return out;

@@ -238,3 +238,73 @@ TEST(ParserLinkTest, TruncatedInsideVlanTag) {
     EXPECT_EQ(p.network, NetworkProtocol::None);
     EXPECT_EQ(p.vlan_count, 0u);
 }
+
+TEST(ParserLinkTest, NullLittleEndianIPv4) {
+    PacketBuilder b;
+    b.null_header(2, false).bytes(20);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Null);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+    EXPECT_EQ(p.ether_type, 0x0800);
+    EXPECT_EQ(p.l3_offset, 4u);
+}
+
+TEST(ParserLinkTest, NullBigEndianIPv4) {
+    PacketBuilder b;
+    b.null_header(2, true).bytes(20);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Null);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+    EXPECT_EQ(p.ether_type, 0x0800);
+    EXPECT_EQ(p.l3_offset, 4u);
+}
+
+class NullIPv6Test : public ::testing::TestWithParam<uint32_t> {};
+TEST_P(NullIPv6Test, NullIPv6AllFamilies) {
+    const uint32_t af = GetParam();
+    PacketBuilder b;
+    b.null_header(af, false).bytes(40);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Null);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv6);
+    EXPECT_EQ(p.ether_type, 0x86DD);
+    EXPECT_EQ(p.l3_offset, 4u);
+}
+INSTANTIATE_TEST_SUITE_P(
+    IPv6AddressFamilies,
+    NullIPv6Test,
+    ::testing::Values(24u, 28u, 30u)
+);
+
+TEST(ParserLinkTest, NullUnknownFamilyIsOther) {
+    PacketBuilder b;
+    b.null_header(7, false).bytes(10);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Null);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.network, NetworkProtocol::Other);
+    EXPECT_EQ(p.ether_type, 0u);
+    EXPECT_EQ(p.l3_offset, 4u);
+}
+
+TEST(ParserLinkTest, LoopIsAlwaysBigEndian) {
+    PacketBuilder b_be;
+    b_be.null_header(2, true).bytes(20);
+    const ParsedPacket p_be = parse_packet(b_be.build(), LinkType::Loop);
+    EXPECT_EQ(p_be.status, ParseStatus::Ok);
+    EXPECT_EQ(p_be.network, NetworkProtocol::IPv4);
+    EXPECT_EQ(p_be.ether_type, 0x0800);
+    PacketBuilder b_le;
+    b_le.null_header(2, false).bytes(20);
+    const ParsedPacket p_le = parse_packet(b_le.build(), LinkType::Loop);
+    EXPECT_EQ(p_le.status, ParseStatus::Ok);
+    EXPECT_EQ(p_le.network, NetworkProtocol::Other);
+    EXPECT_EQ(p_le.ether_type, 0u);
+}
+
+TEST(ParserLinkTest, NullTruncated) {
+    PacketBuilder b;
+    b.bytes(3, 0xAA);
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Null);
+    EXPECT_EQ(p.status, ParseStatus::Truncated);
+    EXPECT_EQ(p.network, NetworkProtocol::None);
+}
