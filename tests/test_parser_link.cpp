@@ -353,3 +353,58 @@ TEST(ParserLinkTest, SllTruncated) {
     EXPECT_EQ(p.network, NetworkProtocol::None);
     EXPECT_EQ(p.captured_length, 15u);
 }
+
+class EmptyPacketTest : public ::testing::TestWithParam<LinkType> {};
+TEST_P(EmptyPacketTest, EmptyPacketOnEveryLinkType) {
+    const LinkType link = GetParam();
+    const RawPacket empty_pkt(Timestamp{10}, nullptr, 0, 0);
+    const ParsedPacket p = parse_packet(empty_pkt, link);
+    EXPECT_EQ(p.status, ParseStatus::Truncated);
+    EXPECT_EQ(p.network, NetworkProtocol::None);
+    EXPECT_EQ(p.captured_length, 0u);
+}
+INSTANTIATE_TEST_SUITE_P(
+    AllSupportedLinkTypes,
+    EmptyPacketTest,
+    ::testing::Values(
+        LinkType::Ethernet,
+        LinkType::LinuxSll,
+        LinkType::Null,
+        LinkType::Loop
+    )
+);
+
+TEST(ParserLinkTest, EveryPrefixIsSafe) {
+    PacketBuilder b_qinq;
+    b_qinq.ethernet(0x88A8)
+          .vlan(10, 0x8100)
+          .vlan(20, 0x0800)
+          .bytes(30, 0xFF);
+    const RawPacket qinq_pkt = b_qinq.build();
+    PacketBuilder b_sll;
+    b_sll.sll(0x8100)
+         .vlan(100, 0x0800)
+         .bytes(30, 0xAA);
+    const RawPacket sll_pkt = b_sll.build();
+    PacketBuilder b_null;
+    b_null.null_header(2, false)
+          .bytes(30, 0xBB);
+    const RawPacket null_pkt = b_null.build();
+    auto verify_all_prefixes = [](const RawPacket& full_pkt, LinkType link) {
+        for (std::size_t len = 0; len <= full_pkt.data.size(); ++len) {
+            RawPacket prefix_pkt = full_pkt;
+            prefix_pkt.data.resize(len);
+            const ParsedPacket p = parse_packet(prefix_pkt, link);
+            EXPECT_TRUE(p.status == ParseStatus::Ok || p.status == ParseStatus::Truncated)
+                << "Broken status at length " << len << " for link type " << static_cast<int>(link);
+            if (p.network != NetworkProtocol::None) {
+                EXPECT_LE(p.l3_offset, p.captured_length)
+                    << "l3_offset exceeds captured_length at prefix length " << len;
+                EXPECT_EQ(p.status, ParseStatus::Ok);
+            }
+        }
+    };
+    verify_all_prefixes(qinq_pkt, LinkType::Ethernet);
+    verify_all_prefixes(sll_pkt, LinkType::LinuxSll);
+    verify_all_prefixes(null_pkt, LinkType::Null);
+}
