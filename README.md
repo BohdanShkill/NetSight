@@ -22,14 +22,14 @@
 
 ## Overview
 
-**NetSight** captures live network traffic directly from OS-level interfaces (or replays `.pcap` dumps), dispatches packets through a bounded thread-safe queue to worker threads, parses protocol headers (L2–L4), detects network anomalies (SYN-flood attacks and port scans) in a sliding time window, and exposes real-time statistics via an embedded REST API and CSV exporter.
+**NetSight** can replay live network traffic from OS-level interfaces, or can replay .pcap files, passes packets through a bounded thread-safe queue to worker threads, does live detection of network anomalies (SYN-flood attacks and port scans) in a sliding time window, and provides real-time statistics through an embedded REST API and CSV exporter.
 
 ### Key Engineering Decisions
 
-* **Single Copy at Boundary, Zero-Allocation Parser:** Incoming packets are copied once from driver buffers into contiguous storage (`RawPacket`); all subsequent protocol parsing operates strictly via non-owning memory views.
-* **UB-Free Byte-Level Parsing:** Network headers are decoded via bounds-checked endian-agnostic readers instead of dangerous `reinterpret_cast` casts over `#pragma pack` structs, preventing unaligned memory access crashes on non-x86 architectures.
-* **Predictable Memory Footprint:** Packet processing uses a bounded queue with drop-newest backpressure to guarantee stability under volumetric DDoS conditions.
-* **Clean Layering:** Decoupled into `netsight_core` (standard C++17, zero third-party capture dependencies) and `netsight_capture` (thin native OS wrapper for `libpcap`/`Npcap`).
+* **Single Copy at Boundary:** All incoming packets are copied from driver buffers into contiguous (RawPacket) storage, and all protocol parsing is then done via non-owning memory views.
+* **UB-Free Byte-Level Parsing:** Network headers are read using endian-agnostic bounds-checked readers instead of using unsafe reinterpret_cast casts with #pragma pack structs, which avoids unaligned memory accesses from crashing on non-x86 platforms.
+* **Stable Packet Processing:** Packet processing will be done using a bounded queue with drop-newest backpressure to ensure packet processing stability under volumetric DDoS conditions.
+* **Clean Layering:** Split into netsight_core (standard C++17 with no third party capture dependency) and netsight_capture (thin native OS wrapper for libpcap/Npcap).
 
 ---
 
