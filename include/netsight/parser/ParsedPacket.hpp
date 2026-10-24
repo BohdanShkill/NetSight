@@ -14,14 +14,6 @@ enum class ParseStatus {
     UnsupportedLinkType   
 };
 
-enum class NetworkProtocol {
-    None,   
-    IPv4,   
-    IPv6,   
-    Arp,    
-    Other   
-};
-
 struct ParsedPacket {
     Timestamp timestamp{};
     uint32_t wire_length{0};        
