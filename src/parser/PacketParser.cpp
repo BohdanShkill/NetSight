@@ -18,6 +18,21 @@ constexpr NetworkProtocol classify_ether_type(uint16_t ether_type) noexcept {
     }
 }
 
+constexpr TransportProtocol classify_ip_protocol(uint8_t proto) noexcept {
+    switch (proto) {
+        case 6:
+            return TransportProtocol::TCP;
+        case 17:
+            return TransportProtocol::UDP;
+        case 1:
+            return TransportProtocol::ICMP;
+        case 58:
+            return TransportProtocol::ICMPv6;
+        default:
+            return TransportProtocol::Other;
+    }
+}
+
 bool decode_ethernet(ByteReader& reader, uint16_t& out_ether_type) noexcept {
     reader.skip(12);
     out_ether_type = reader.u16_be();
@@ -63,9 +78,9 @@ bool decode_null_or_loop(ByteReader& reader, uint16_t& out_ether_type, bool big_
         return false;
     }
     if (af == 2) {
-        out_ether_type = 0x0800; // IPv4
+        out_ether_type = 0x0800;
     } else if (af == 24 || af == 28 || af == 30) {
-        out_ether_type = 0x86DD; // IPv6
+        out_ether_type = 0x86DD;
     } else {
         out_ether_type = 0;
     }
@@ -76,6 +91,68 @@ bool decode_sll(ByteReader& reader, uint16_t& out_ether_type) noexcept {
     reader.skip(14);
     out_ether_type = reader.u16_be();
     return reader.ok();
+}
+
+bool decode_ipv4(ByteReader& reader, ParsedPacket& out, uint8_t& out_proto, uint16_t& out_total_len) noexcept {
+    if (reader.remaining() < 20) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    const std::size_t start_pos = reader.position();
+    const uint8_t ver_ihl = reader.u8();
+    const uint8_t version = static_cast<uint8_t>(ver_ihl >> 4);
+    const uint8_t ihl = static_cast<uint8_t>(ver_ihl & 0x0F);
+
+    if (version != 4 || ihl < 5) {
+        out.status = ParseStatus::Malformed;
+        return false;
+    }
+
+    reader.skip(1);
+    const uint16_t total_length = reader.u16_be();
+    const uint16_t header_bytes = static_cast<uint16_t>(ihl * 4);
+
+    if (total_length < header_bytes) {
+        out.status = ParseStatus::Malformed;
+        return false;
+    }
+
+    reader.skip(2);
+    const uint16_t flags_frag = reader.u16_be();
+    out.ip_ttl = reader.u8();
+    const uint8_t protocol = reader.u8();
+    reader.skip(2);
+
+    const Byte* src_bytes = reader.bytes(4);
+    const Byte* dst_bytes = reader.bytes(4);
+    if (!src_bytes || !dst_bytes) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    out.src_ip = IpAddress::from_ipv4(src_bytes);
+    out.dst_ip = IpAddress::from_ipv4(dst_bytes);
+
+    if (header_bytes > 20) {
+        const std::size_t opt_len = header_bytes - 20;
+        if (reader.remaining() < opt_len) {
+            out.status = ParseStatus::Truncated;
+            return false;
+        }
+        reader.skip(opt_len);
+    }
+
+    const bool mf = (flags_frag & 0x2000) != 0;
+    const uint16_t frag_offset_units = static_cast<uint16_t>(flags_frag & 0x1FFF);
+    out.fragment_offset = static_cast<uint16_t>(frag_offset_units * 8);
+    out.is_fragment = mf || (frag_offset_units != 0);
+
+    out.l4_offset = static_cast<uint32_t>(start_pos + header_bytes);
+    out_proto = protocol;
+    out_total_len = total_length;
+
+    return true;
 }
 
 }
@@ -133,8 +210,27 @@ ParsedPacket parse_packet(const RawPacket& packet, LinkType link_type) noexcept 
     out.ether_type = ether_type;
     out.network = classify_ether_type(ether_type);
     out.l3_offset = static_cast<uint32_t>(reader.position());
+
+    if (out.network == NetworkProtocol::IPv4) {
+        uint8_t l4_proto{0};
+        uint16_t ip_total_len{0};
+        if (!decode_ipv4(reader, out, l4_proto, ip_total_len)) {
+            return out;
+        }
+
+        if (out.is_fragment && out.fragment_offset > 0) {
+            out.transport = TransportProtocol::None;
+            out.status = ParseStatus::Ok;
+            return out;
+        }
+
+        out.transport = classify_ip_protocol(l4_proto);
+        out.status = ParseStatus::Ok;
+        return out;
+    }
+
     out.status = ParseStatus::Ok;
     return out;
 }
 
-}
+} 
