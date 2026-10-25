@@ -3,8 +3,12 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <unordered_set>
+#include <map>
 
 #include "netsight/core/Types.hpp"
+#include "netsight/core/IpAddress.hpp"
+#include "netsight/parser/ParsedPacket.hpp"
 
 using namespace netsight;
 
@@ -111,4 +115,87 @@ TEST(LinkTypeTest, TcpdumpNumericEquivalence) {
     EXPECT_EQ(static_cast<std::uint16_t>(LinkType::Loop), 108);
     EXPECT_EQ(static_cast<std::uint16_t>(LinkType::LinuxSll), 113);
     EXPECT_EQ(static_cast<std::uint16_t>(LinkType::Unknown), 65535);
+}
+
+TEST(IpAddressTest, FromIPv4AndToString) {
+    const std::uint8_t raw[4] = {192, 168, 1, 100};
+    const auto ip = IpAddress::from_ipv4(raw);
+
+    EXPECT_TRUE(ip.is_v4());
+    EXPECT_FALSE(ip.is_v6());
+    EXPECT_TRUE(ip.is_valid());
+    EXPECT_EQ(ip.protocol, NetworkProtocol::IPv4);
+    EXPECT_EQ(ip.to_string(), "192.168.1.100");
+}
+
+TEST(IpAddressTest, FromIPv6AndToString) {
+    const std::uint8_t raw[16] = {
+        0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+    };
+    const auto ip = IpAddress::from_ipv6(raw);
+
+    EXPECT_FALSE(ip.is_v4());
+    EXPECT_TRUE(ip.is_v6());
+    EXPECT_TRUE(ip.is_valid());
+    EXPECT_EQ(ip.protocol, NetworkProtocol::IPv6);
+    EXPECT_EQ(ip.to_string(), "2001:db8:0:0:0:0:0:1");
+}
+
+TEST(IpAddressTest, NullPointerSafety) {
+    const auto ip4 = IpAddress::from_ipv4(nullptr);
+    EXPECT_FALSE(ip4.is_valid());
+    EXPECT_EQ(ip4.protocol, NetworkProtocol::None);
+    EXPECT_EQ(ip4.to_string(), "None");
+
+    const auto ip6 = IpAddress::from_ipv6(nullptr);
+    EXPECT_FALSE(ip6.is_valid());
+    EXPECT_EQ(ip6.protocol, NetworkProtocol::None);
+    EXPECT_EQ(ip6.to_string(), "None");
+}
+
+TEST(IpAddressTest, EqualityAndOrdering) {
+    const std::uint8_t raw_a[4] = {10, 0, 0, 1};
+    const std::uint8_t raw_b[4] = {10, 0, 0, 2};
+    const auto ip_a = IpAddress::from_ipv4(raw_a);
+    const auto ip_b = IpAddress::from_ipv4(raw_b);
+    const auto ip_a2 = IpAddress::from_ipv4(raw_a);
+
+    EXPECT_EQ(ip_a, ip_a2);
+    EXPECT_NE(ip_a, ip_b);
+    EXPECT_LT(ip_a, ip_b);
+
+    std::map<IpAddress, std::string> ip_map;
+    ip_map[ip_a] = "host_a";
+    ip_map[ip_b] = "host_b";
+    EXPECT_EQ(ip_map[ip_a], "host_a");
+    EXPECT_EQ(ip_map[ip_b], "host_b");
+}
+
+TEST(IpAddressTest, HashSupportInUnorderedSet) {
+    const std::uint8_t raw[4] = {172, 16, 0, 1};
+    const auto ip = IpAddress::from_ipv4(raw);
+
+    std::unordered_set<IpAddress> set;
+    set.insert(ip);
+
+    EXPECT_EQ(set.count(ip), 1u);
+    EXPECT_EQ(set.count(IpAddress::from_ipv4(nullptr)), 0u);
+}
+
+TEST(TcpFlagsTest, IndividualFlags) {
+    EXPECT_TRUE(TcpFlags{0x01}.fin());
+    EXPECT_TRUE(TcpFlags{0x02}.syn());
+    EXPECT_TRUE(TcpFlags{0x04}.rst());
+    EXPECT_TRUE(TcpFlags{0x08}.psh());
+    EXPECT_TRUE(TcpFlags{0x10}.ack());
+    EXPECT_TRUE(TcpFlags{0x20}.urg());
+    EXPECT_TRUE(TcpFlags{0x40}.ece());
+    EXPECT_TRUE(TcpFlags{0x80}.cwr());
+
+    const TcpFlags syn_ack{0x12};
+    EXPECT_TRUE(syn_ack.syn());
+    EXPECT_TRUE(syn_ack.ack());
+    EXPECT_FALSE(syn_ack.fin());
+    EXPECT_FALSE(syn_ack.rst());
 }
