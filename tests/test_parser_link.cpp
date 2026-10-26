@@ -104,7 +104,7 @@ TEST(ParserLinkTest, EthernetIPv4) {
 
 TEST(ParserLinkTest, EthernetIPv6) {
     PacketBuilder b;
-    b.ethernet(0x86DD).bytes(40);
+    b.ethernet(0x86DD).ipv6();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv6);
@@ -263,7 +263,7 @@ class NullIPv6Test : public ::testing::TestWithParam<uint32_t> {};
 TEST_P(NullIPv6Test, NullIPv6AllFamilies) {
     const uint32_t af = GetParam();
     PacketBuilder b;
-    b.null_header(af, false).bytes(40);
+    b.null_header(af, false).ipv6();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Null);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv6);
