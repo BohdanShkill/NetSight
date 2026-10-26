@@ -94,7 +94,7 @@ TEST(ParserLinkTest, GoldenTcpdumpFileIsEthernetIPv4) {
 
 TEST(ParserLinkTest, EthernetIPv4) {
     PacketBuilder b;
-    b.ethernet(0x0800).ipv4();
+    b.ethernet(0x0800).ipv4().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv4);
@@ -104,7 +104,7 @@ TEST(ParserLinkTest, EthernetIPv4) {
 
 TEST(ParserLinkTest, EthernetIPv6) {
     PacketBuilder b;
-    b.ethernet(0x86DD).ipv6();
+    b.ethernet(0x86DD).ipv6().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv6);
@@ -157,7 +157,7 @@ TEST(ParserLinkTest, SingleDot1QTag) {
     PacketBuilder b;
     b.ethernet(0x8100)
      .vlan(100, 0x0800)
-     .ipv4();
+     .ipv4().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv4);
@@ -172,7 +172,7 @@ TEST(ParserLinkTest, QinQTwoTags) {
     b.ethernet(0x88A8)
      .vlan(10, 0x8100)
      .vlan(20, 0x0800)
-     .ipv4();
+     .ipv4().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv4);
@@ -187,7 +187,7 @@ TEST(ParserLinkTest, LegacyQinQ9100) {
     PacketBuilder b;
     b.ethernet(0x9100)
      .vlan(50, 0x0800)
-     .ipv4();
+     .ipv4().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv4);
@@ -201,7 +201,7 @@ TEST(ParserLinkTest, VidIgnoresPcpAndDei) {
     b.ethernet(0x8100)
      .u16_be(0xF00A)
      .u16_be(0x0800)
-     .ipv4();
+     .ipv4().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv4);
@@ -241,7 +241,7 @@ TEST(ParserLinkTest, TruncatedInsideVlanTag) {
 
 TEST(ParserLinkTest, NullLittleEndianIPv4) {
     PacketBuilder b;
-    b.null_header(2, false).ipv4();
+    b.null_header(2, false).ipv4().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Null);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv4);
@@ -251,7 +251,7 @@ TEST(ParserLinkTest, NullLittleEndianIPv4) {
 
 TEST(ParserLinkTest, NullBigEndianIPv4) {
     PacketBuilder b;
-    b.null_header(2, true).ipv4();
+    b.null_header(2, true).ipv4().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Null);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv4);
@@ -263,7 +263,7 @@ class NullIPv6Test : public ::testing::TestWithParam<uint32_t> {};
 TEST_P(NullIPv6Test, NullIPv6AllFamilies) {
     const uint32_t af = GetParam();
     PacketBuilder b;
-    b.null_header(af, false).ipv6();
+    b.null_header(af, false).ipv6().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::Null);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv6);
@@ -288,7 +288,7 @@ TEST(ParserLinkTest, NullUnknownFamilyIsOther) {
 
 TEST(ParserLinkTest, LoopIsAlwaysBigEndian) {
     PacketBuilder b_be;
-    b_be.null_header(2, true).ipv4();
+    b_be.null_header(2, true).ipv4().tcp();
     const ParsedPacket p_be = parse_packet(b_be.build(), LinkType::Loop);
     EXPECT_EQ(p_be.status, ParseStatus::Ok);
     EXPECT_EQ(p_be.network, NetworkProtocol::IPv4);
@@ -311,7 +311,7 @@ TEST(ParserLinkTest, NullTruncated) {
 
 TEST(ParserLinkTest, SllIPv4) {
     PacketBuilder b;
-    b.sll(0x0800).ipv4();
+    b.sll(0x0800).ipv4().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::LinuxSll);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv4);
@@ -323,7 +323,7 @@ TEST(ParserLinkTest, SllWithVlan) {
     PacketBuilder b;
     b.sll(0x8100)
      .vlan(50, 0x0800)
-     .ipv4();
+     .ipv4().tcp();
     const ParsedPacket p = parse_packet(b.build(), LinkType::LinuxSll);
     EXPECT_EQ(p.status, ParseStatus::Ok);
     EXPECT_EQ(p.network, NetworkProtocol::IPv4);
@@ -379,16 +379,16 @@ TEST(ParserLinkTest, EveryPrefixIsSafe) {
     b_qinq.ethernet(0x88A8)
           .vlan(10, 0x8100)
           .vlan(20, 0x0800)
-          .ipv4();
+          .ipv4().tcp();
     const RawPacket qinq_pkt = b_qinq.build();
     PacketBuilder b_sll;
     b_sll.sll(0x8100)
          .vlan(100, 0x0800)
-         .ipv4();
+         .ipv4().tcp();
     const RawPacket sll_pkt = b_sll.build();
     PacketBuilder b_null;
     b_null.null_header(2, false)
-          .ipv4();
+          .ipv4().tcp();
     const RawPacket null_pkt = b_null.build();
     auto verify_all_prefixes = [](const RawPacket& full_pkt, LinkType link) {
         for (std::size_t len = 0; len <= full_pkt.data.size(); ++len) {

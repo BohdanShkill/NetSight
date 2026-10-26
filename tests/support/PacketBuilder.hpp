@@ -152,8 +152,8 @@ public:
         return *this;
     }
 
-    PacketBuilder& tcp(uint16_t src_port,
-                       uint16_t dst_port,
+    PacketBuilder& tcp(uint16_t src_port = 12345,
+                       uint16_t dst_port = 80,
                        uint8_t flags = 0x02,
                        uint32_t seq = 1000,
                        uint32_t ack = 0,

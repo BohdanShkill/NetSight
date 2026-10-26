@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "netsight/parser/PacketParser.hpp"
 #include "netsight/core/ByteReader.hpp"
 
@@ -253,6 +255,105 @@ bool decode_ipv6(ByteReader& reader, ParsedPacket& out, uint8_t& out_l4_proto, u
     return true;
 }
 
+bool decode_tcp(ByteReader& reader, ParsedPacket& out, uint32_t l4_wire_available) noexcept {
+    if (reader.remaining() < 20) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    out.src_port = reader.u16_be();
+    out.dst_port = reader.u16_be();
+    reader.skip(8);
+
+    const uint8_t doff = static_cast<uint8_t>(reader.u8() >> 4);
+    if (doff < 5) {
+        out.status = ParseStatus::Malformed;
+        return false;
+    }
+
+    out.tcp_flags = TcpFlags{reader.u8()};
+    reader.skip(6);
+
+    const uint16_t hdr_len = static_cast<uint16_t>(doff * 4);
+    if (hdr_len > 20) {
+        const std::size_t opt_len = hdr_len - 20;
+        if (reader.remaining() < opt_len) {
+            out.status = ParseStatus::Truncated;
+            return false;
+        }
+        reader.skip(opt_len);
+    }
+
+    out.payload_offset = static_cast<uint32_t>(reader.position());
+    uint32_t expected_payload = 0;
+    if (l4_wire_available >= hdr_len) {
+        expected_payload = l4_wire_available - hdr_len;
+    }
+    out.payload_length = std::min(expected_payload, static_cast<uint32_t>(reader.remaining()));
+    return true;
+}
+
+bool decode_udp(ByteReader& reader, ParsedPacket& out, uint32_t l4_wire_available) noexcept {
+    if (reader.remaining() < 8) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    out.src_port = reader.u16_be();
+    out.dst_port = reader.u16_be();
+    const uint16_t udp_len = reader.u16_be();
+    if (udp_len < 8) {
+        out.status = ParseStatus::Malformed;
+        return false;
+    }
+    reader.skip(2);
+
+    out.payload_offset = static_cast<uint32_t>(reader.position());
+    uint32_t expected_payload = static_cast<uint32_t>(udp_len - 8);
+    if (l4_wire_available >= 8) {
+        expected_payload = std::min(expected_payload, l4_wire_available - 8);
+    }
+    out.payload_length = std::min(expected_payload, static_cast<uint32_t>(reader.remaining()));
+    return true;
+}
+
+bool decode_icmp(ByteReader& reader, ParsedPacket& out) noexcept {
+    if (reader.remaining() < 4) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    out.icmp_type = reader.u8();
+    out.icmp_code = reader.u8();
+    reader.skip(2);
+
+    out.src_port = 0;
+    out.dst_port = 0;
+    out.payload_offset = static_cast<uint32_t>(reader.position());
+    out.payload_length = static_cast<uint32_t>(reader.remaining());
+    return true;
+}
+
+bool decode_l4(ByteReader& reader, ParsedPacket& out, uint8_t l4_proto, uint32_t l4_wire_available) noexcept {
+    switch (l4_proto) {
+        case 6:
+            out.transport = TransportProtocol::TCP;
+            return decode_tcp(reader, out, l4_wire_available);
+        case 17:
+            out.transport = TransportProtocol::UDP;
+            return decode_udp(reader, out, l4_wire_available);
+        case 1:
+            out.transport = TransportProtocol::ICMP;
+            return decode_icmp(reader, out);
+        case 58:
+            out.transport = TransportProtocol::ICMPv6;
+            return decode_icmp(reader, out);
+        default:
+            out.transport = TransportProtocol::Other;
+            return true;
+    }
+}
+
 }
 
 namespace netsight {
@@ -309,24 +410,6 @@ ParsedPacket parse_packet(const RawPacket& packet, LinkType link_type) noexcept 
     out.network = classify_ether_type(ether_type);
     out.l3_offset = static_cast<uint32_t>(reader.position());
 
-    if (out.network == NetworkProtocol::IPv4) {
-        uint8_t l4_proto{0};
-        uint16_t ip_total_len{0};
-        if (!decode_ipv4(reader, out, l4_proto, ip_total_len)) {
-            return out;
-        }
-
-        if (out.is_fragment && out.fragment_offset > 0) {
-            out.transport = TransportProtocol::None;
-            out.status = ParseStatus::Ok;
-            return out;
-        }
-
-        out.transport = classify_ip_protocol(l4_proto);
-        out.status = ParseStatus::Ok;
-        return out;
-    }
-
         if (out.network == NetworkProtocol::IPv4) {
         uint8_t l4_proto{0};
         uint16_t ip_total_len{0};
@@ -340,7 +423,13 @@ ParsedPacket parse_packet(const RawPacket& packet, LinkType link_type) noexcept 
             return out;
         }
 
-        out.transport = classify_ip_protocol(l4_proto);
+        const uint32_t ip_hdr_len = out.l4_offset - out.l3_offset;
+        const uint32_t l4_wire = (ip_total_len >= ip_hdr_len) ? (ip_total_len - ip_hdr_len) : 0;
+
+        if (!decode_l4(reader, out, l4_proto, l4_wire)) {
+            return out;
+        }
+
         out.status = ParseStatus::Ok;
         return out;
     }
@@ -358,7 +447,13 @@ ParsedPacket parse_packet(const RawPacket& packet, LinkType link_type) noexcept 
             return out;
         }
 
-        out.transport = classify_ip_protocol(l4_proto);
+        const uint32_t ext_len = out.l4_offset - (out.l3_offset + 40);
+        const uint32_t l4_wire = (payload_len >= ext_len) ? (payload_len - ext_len) : 0;
+
+        if (!decode_l4(reader, out, l4_proto, l4_wire)) {
+            return out;
+        }
+
         out.status = ParseStatus::Ok;
         return out;
     }

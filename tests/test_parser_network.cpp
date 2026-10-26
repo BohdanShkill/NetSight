@@ -10,8 +10,8 @@ using namespace netsight::test;
 TEST(ParserNetworkTest, IPv4BasicValid) {
     PacketBuilder b;
     b.ethernet(0x0800)
-     .ipv4({192, 168, 1, 10}, {10, 0, 0, 1}, 6, 64);
-
+     .ipv4({192, 168, 1, 10}, {10, 0, 0, 1}, 6, 64)
+     .tcp(1234, 80);
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
 
     EXPECT_EQ(p.status, ParseStatus::Ok);
@@ -29,7 +29,8 @@ TEST(ParserNetworkTest, IPv4BasicValid) {
 TEST(ParserNetworkTest, IPv4WithOptions) {
     PacketBuilder b;
     b.ethernet(0x0800)
-     .ipv4({192, 168, 1, 1}, {192, 168, 1, 2}, 17, 128, 0, 6);
+     .ipv4({192, 168, 1, 1}, {192, 168, 1, 2}, 17, 128, 0, 6)
+     .udp(53, 53);
 
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
 
@@ -102,8 +103,8 @@ TEST(ParserNetworkTest, IPv4MalformedTotalLength) {
 TEST(ParserNetworkTest, IPv4FirstFragment) {
     PacketBuilder b;
     b.ethernet(0x0800)
-     .ipv4({10, 1, 1, 1}, {10, 1, 1, 2}, 6, 64, 0, 5, 0x2000);
-
+     .ipv4({10, 1, 1, 1}, {10, 1, 1, 2}, 6, 64, 0, 5, 0x2000)
+     .tcp(80, 8000);
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
 
     EXPECT_EQ(p.status, ParseStatus::Ok);
@@ -130,8 +131,8 @@ TEST(ParserNetworkTest, IPv6TcpValid) {
     b.ethernet(0x86DD)
      .ipv6({0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
            {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2},
-           6, 64);
-
+           6, 64)
+     .tcp(80, 443);
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
 
     EXPECT_EQ(p.status, ParseStatus::Ok);
@@ -176,7 +177,8 @@ TEST(ParserNetworkTest, IPv6WithHopByHopOption) {
      .ipv6({0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
            {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2},
            0, 64)
-     .ipv6_ext_header(17, 0, {0, 0, 0, 0, 0, 0});
+     .ipv6_ext_header(17, 0, {0, 0, 0, 0, 0, 0})
+     .udp(53, 53);
 
     const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
 
@@ -235,4 +237,108 @@ TEST(ParserNetworkTest, IPv6TruncatedInsideExtHeader) {
 
     EXPECT_EQ(p.status, ParseStatus::Truncated);
     EXPECT_EQ(p.network, NetworkProtocol::IPv6);
+}
+
+TEST(ParserNetworkTest, TcpAllFlagsIndividually) {
+    const uint8_t flags[8] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
+    for (uint8_t f : flags) {
+        PacketBuilder b;
+        b.ethernet(0x0800)
+         .ipv4()
+         .tcp(1000, 2000, f);
+
+        const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+        EXPECT_EQ(p.status, ParseStatus::Ok);
+        EXPECT_EQ(p.tcp_flags.value, f);
+    }
+}
+
+TEST(ParserNetworkTest, TcpMalformedDataOffsetTooSmall) {
+    PacketBuilder b;
+    b.ethernet(0x0800)
+     .ipv4()
+     .tcp(1234, 80, 0x02, 1000, 0, 4);
+
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Malformed);
+}
+
+TEST(ParserNetworkTest, TcpTruncatedHeader) {
+    PacketBuilder b;
+    b.ethernet(0x0800)
+     .ipv4({10, 0, 0, 1}, {10, 0, 0, 2}, 6);
+    b.bytes(10);
+
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Truncated);
+    EXPECT_EQ(p.network, NetworkProtocol::IPv4);
+}
+
+TEST(ParserNetworkTest, UdpValidWithPayload) {
+    PacketBuilder b;
+    b.ethernet(0x0800)
+     .ipv4({192, 168, 1, 1}, {192, 168, 1, 2}, 17)
+     .udp(53, 12345)
+     .payload("0123456789");
+
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.transport, TransportProtocol::UDP);
+    EXPECT_EQ(p.src_port, 53u);
+    EXPECT_EQ(p.dst_port, 12345u);
+    EXPECT_EQ(p.payload_offset, 14u + 20u + 8u);
+    EXPECT_EQ(p.payload_length, 10u);
+}
+
+TEST(ParserNetworkTest, UdpMalformedLengthTooSmall) {
+    PacketBuilder b;
+    b.ethernet(0x0800)
+     .ipv4({192, 168, 1, 1}, {192, 168, 1, 2}, 17)
+     .udp(53, 53, 7);
+
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Malformed);
+}
+
+TEST(ParserNetworkTest, IcmpEchoRequest) {
+    PacketBuilder b;
+    b.ethernet(0x0800)
+     .ipv4({10, 0, 0, 1}, {10, 0, 0, 2}, 1)
+     .icmp(8, 0);
+
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.transport, TransportProtocol::ICMP);
+    EXPECT_EQ(p.icmp_type, 8u);
+    EXPECT_EQ(p.icmp_code, 0u);
+    EXPECT_EQ(p.src_port, 0u);
+    EXPECT_EQ(p.dst_port, 0u);
+}
+
+TEST(ParserNetworkTest, Icmpv6NeighborSolicitation) {
+    PacketBuilder b;
+    b.ethernet(0x86DD)
+     .ipv6({0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+           {0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+           58)
+     .icmpv6(135, 0);
+
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.transport, TransportProtocol::ICMPv6);
+    EXPECT_EQ(p.icmp_type, 135u);
+    EXPECT_EQ(p.icmp_code, 0u);
+}
+
+TEST(ParserNetworkTest, EthernetPaddingIgnoredInPayload) {
+    PacketBuilder b;
+    b.ethernet(0x0800)
+     .ipv4({192, 168, 1, 1}, {192, 168, 1, 2}, 6, 64, 40)
+     .tcp(80, 12345, 0x02, 1000, 0, 5)
+     .bytes(6, 0);
+
+    const ParsedPacket p = parse_packet(b.build(), LinkType::Ethernet);
+    EXPECT_EQ(p.status, ParseStatus::Ok);
+    EXPECT_EQ(p.transport, TransportProtocol::TCP);
+    EXPECT_EQ(p.payload_length, 0u);
 }
