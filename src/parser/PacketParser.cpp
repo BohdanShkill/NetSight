@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "netsight/parser/PacketParser.hpp"
 #include "netsight/core/ByteReader.hpp"
 
@@ -15,6 +17,21 @@ constexpr NetworkProtocol classify_ether_type(uint16_t ether_type) noexcept {
             return NetworkProtocol::Arp;
         default:
             return NetworkProtocol::Other;
+    }
+}
+
+constexpr TransportProtocol classify_ip_protocol(uint8_t proto) noexcept {
+    switch (proto) {
+        case 6:
+            return TransportProtocol::TCP;
+        case 17:
+            return TransportProtocol::UDP;
+        case 1:
+            return TransportProtocol::ICMP;
+        case 58:
+            return TransportProtocol::ICMPv6;
+        default:
+            return TransportProtocol::Other;
     }
 }
 
@@ -63,9 +80,9 @@ bool decode_null_or_loop(ByteReader& reader, uint16_t& out_ether_type, bool big_
         return false;
     }
     if (af == 2) {
-        out_ether_type = 0x0800; // IPv4
+        out_ether_type = 0x0800;
     } else if (af == 24 || af == 28 || af == 30) {
-        out_ether_type = 0x86DD; // IPv6
+        out_ether_type = 0x86DD;
     } else {
         out_ether_type = 0;
     }
@@ -76,6 +93,265 @@ bool decode_sll(ByteReader& reader, uint16_t& out_ether_type) noexcept {
     reader.skip(14);
     out_ether_type = reader.u16_be();
     return reader.ok();
+}
+
+bool decode_ipv4(ByteReader& reader, ParsedPacket& out, uint8_t& out_proto, uint16_t& out_total_len) noexcept {
+    if (reader.remaining() < 20) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    const uint8_t ver_ihl = reader.u8();
+    const uint8_t version = static_cast<uint8_t>(ver_ihl >> 4);
+    const uint8_t ihl = static_cast<uint8_t>(ver_ihl & 0x0F);
+
+    if (version != 4 || ihl < 5) {
+        out.status = ParseStatus::Malformed;
+        return false;
+    }
+
+    reader.skip(1);
+    const uint16_t total_length = reader.u16_be();
+    const uint16_t header_bytes = static_cast<uint16_t>(ihl * 4);
+
+    if (total_length < header_bytes) {
+        out.status = ParseStatus::Malformed;
+        return false;
+    }
+
+    reader.skip(2);
+    const uint16_t flags_frag = reader.u16_be();
+    out.ip_ttl = reader.u8();
+    const uint8_t protocol = reader.u8();
+    reader.skip(2);
+
+    const Byte* src_bytes = reader.bytes(4);
+    const Byte* dst_bytes = reader.bytes(4);
+    if (!src_bytes || !dst_bytes) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    out.src_ip = IpAddress::from_ipv4(src_bytes);
+    out.dst_ip = IpAddress::from_ipv4(dst_bytes);
+
+    if (header_bytes > 20) {
+        const std::size_t opt_len = header_bytes - 20;
+        if (reader.remaining() < opt_len) {
+            out.status = ParseStatus::Truncated;
+            return false;
+        }
+        reader.skip(opt_len);
+    }
+
+    const bool mf = (flags_frag & 0x2000) != 0;
+    const uint16_t frag_offset_units = static_cast<uint16_t>(flags_frag & 0x1FFF);
+    out.fragment_offset = static_cast<uint16_t>(frag_offset_units * 8);
+    out.is_fragment = mf || (frag_offset_units != 0);
+
+    out.l4_offset = static_cast<uint32_t>(reader.position());
+    out_proto = protocol;
+    out_total_len = total_length;
+
+    return true;
+}
+
+constexpr bool is_ipv6_extension_header(uint8_t nh) noexcept {
+    return nh == 0  || 
+           nh == 43 || 
+           nh == 44 || 
+           nh == 51 || 
+           nh == 60;   
+}
+
+bool decode_ipv6(ByteReader& reader, ParsedPacket& out, uint8_t& out_l4_proto, uint16_t& out_payload_len) noexcept {
+    if (reader.remaining() < 40) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    const uint32_t vtc_flow = reader.u32_be();
+    const uint8_t version = static_cast<uint8_t>(vtc_flow >> 28);
+
+    if (version != 6) {
+        out.status = ParseStatus::Malformed;
+        return false;
+    }
+
+    const uint16_t payload_len = reader.u16_be();
+    uint8_t current_nh = reader.u8();
+    out.ip_ttl = reader.u8(); 
+
+    const Byte* src_bytes = reader.bytes(16);
+    const Byte* dst_bytes = reader.bytes(16);
+    if (!src_bytes || !dst_bytes) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    out.src_ip = IpAddress::from_ipv6(src_bytes);
+    out.dst_ip = IpAddress::from_ipv6(dst_bytes);
+
+    std::size_t ext_count = 0;
+    constexpr std::size_t MAX_EXT_HEADERS = 8;
+
+    while (is_ipv6_extension_header(current_nh)) {
+        if (ext_count >= MAX_EXT_HEADERS) {
+            out.status = ParseStatus::Malformed;
+            return false;
+        }
+
+        if (current_nh == 44) {
+            if (reader.remaining() < 8) {
+                out.status = ParseStatus::Truncated;
+                return false;
+            }
+            current_nh = reader.u8();
+            reader.skip(1);
+            const uint16_t frag_info = reader.u16_be();
+            reader.skip(4);
+
+            const uint16_t frag_offset_units = static_cast<uint16_t>(frag_info >> 3);
+            const bool m_flag = (frag_info & 0x01) != 0;
+            out.fragment_offset = static_cast<uint16_t>(frag_offset_units * 8);
+            out.is_fragment = m_flag || (frag_offset_units != 0);
+        } else if (current_nh == 51) {
+            if (reader.remaining() < 4) {
+                out.status = ParseStatus::Truncated;
+                return false;
+            }
+            current_nh = reader.u8();
+            const uint8_t ah_len = reader.u8();
+            reader.skip(2);
+
+            const std::size_t total_len = static_cast<std::size_t>(ah_len + 2) * 4;
+            if (total_len < 4 || reader.remaining() < (total_len - 4)) {
+                out.status = ParseStatus::Truncated;
+                return false;
+            }
+            reader.skip(total_len - 4);
+        } else {
+            if (reader.remaining() < 2) {
+                out.status = ParseStatus::Truncated;
+                return false;
+            }
+            current_nh = reader.u8();
+            const uint8_t ext_len_units = reader.u8();
+
+            const std::size_t total_len = static_cast<std::size_t>(ext_len_units + 1) * 8;
+            if (total_len < 2 || reader.remaining() < (total_len - 2)) {
+                out.status = ParseStatus::Truncated;
+                return false;
+            }
+            reader.skip(total_len - 2);
+        }
+
+        ext_count++;
+    }
+
+    out.l4_offset = static_cast<uint32_t>(reader.position());
+    out_l4_proto = current_nh;
+    out_payload_len = payload_len;
+    return true;
+}
+
+bool decode_tcp(ByteReader& reader, ParsedPacket& out, uint32_t l4_wire_available) noexcept {
+    if (reader.remaining() < 20) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    out.src_port = reader.u16_be();
+    out.dst_port = reader.u16_be();
+    reader.skip(8);
+
+    const uint8_t doff = static_cast<uint8_t>(reader.u8() >> 4);
+    if (doff < 5) {
+        out.status = ParseStatus::Malformed;
+        return false;
+    }
+
+    out.tcp_flags = TcpFlags{reader.u8()};
+    reader.skip(6);
+
+    const uint16_t hdr_len = static_cast<uint16_t>(doff * 4);
+    if (hdr_len > 20) {
+        const std::size_t opt_len = hdr_len - 20;
+        if (reader.remaining() < opt_len) {
+            out.status = ParseStatus::Truncated;
+            return false;
+        }
+        reader.skip(opt_len);
+    }
+
+    out.payload_offset = static_cast<uint32_t>(reader.position());
+    uint32_t expected_payload = 0;
+    if (l4_wire_available >= hdr_len) {
+        expected_payload = l4_wire_available - hdr_len;
+    }
+    out.payload_length = std::min(expected_payload, static_cast<uint32_t>(reader.remaining()));
+    return true;
+}
+
+bool decode_udp(ByteReader& reader, ParsedPacket& out, uint32_t l4_wire_available) noexcept {
+    if (reader.remaining() < 8) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    out.src_port = reader.u16_be();
+    out.dst_port = reader.u16_be();
+    const uint16_t udp_len = reader.u16_be();
+    if (udp_len < 8) {
+        out.status = ParseStatus::Malformed;
+        return false;
+    }
+    reader.skip(2);
+
+    out.payload_offset = static_cast<uint32_t>(reader.position());
+    uint32_t expected_payload = static_cast<uint32_t>(udp_len - 8);
+    if (l4_wire_available >= 8) {
+        expected_payload = std::min(expected_payload, l4_wire_available - 8);
+    }
+    out.payload_length = std::min(expected_payload, static_cast<uint32_t>(reader.remaining()));
+    return true;
+}
+
+bool decode_icmp(ByteReader& reader, ParsedPacket& out) noexcept {
+    if (reader.remaining() < 4) {
+        out.status = ParseStatus::Truncated;
+        return false;
+    }
+
+    out.icmp_type = reader.u8();
+    out.icmp_code = reader.u8();
+    reader.skip(2);
+
+    out.src_port = 0;
+    out.dst_port = 0;
+    out.payload_offset = static_cast<uint32_t>(reader.position());
+    out.payload_length = static_cast<uint32_t>(reader.remaining());
+    return true;
+}
+
+bool decode_l4(ByteReader& reader, ParsedPacket& out, uint8_t l4_proto, uint32_t l4_wire_available) noexcept {
+    switch (l4_proto) {
+        case 6:
+            out.transport = TransportProtocol::TCP;
+            return decode_tcp(reader, out, l4_wire_available);
+        case 17:
+            out.transport = TransportProtocol::UDP;
+            return decode_udp(reader, out, l4_wire_available);
+        case 1:
+            out.transport = TransportProtocol::ICMP;
+            return decode_icmp(reader, out);
+        case 58:
+            out.transport = TransportProtocol::ICMPv6;
+            return decode_icmp(reader, out);
+        default:
+            out.transport = TransportProtocol::Other;
+            return true;
+    }
 }
 
 }
@@ -133,8 +409,57 @@ ParsedPacket parse_packet(const RawPacket& packet, LinkType link_type) noexcept 
     out.ether_type = ether_type;
     out.network = classify_ether_type(ether_type);
     out.l3_offset = static_cast<uint32_t>(reader.position());
+
+        if (out.network == NetworkProtocol::IPv4) {
+        uint8_t l4_proto{0};
+        uint16_t ip_total_len{0};
+        if (!decode_ipv4(reader, out, l4_proto, ip_total_len)) {
+            return out;
+        }
+
+        if (out.is_fragment && out.fragment_offset > 0) {
+            out.transport = TransportProtocol::None;
+            out.status = ParseStatus::Ok;
+            return out;
+        }
+
+        const uint32_t ip_hdr_len = out.l4_offset - out.l3_offset;
+        const uint32_t l4_wire = (ip_total_len >= ip_hdr_len) ? (ip_total_len - ip_hdr_len) : 0;
+
+        if (!decode_l4(reader, out, l4_proto, l4_wire)) {
+            return out;
+        }
+
+        out.status = ParseStatus::Ok;
+        return out;
+    }
+
+    if (out.network == NetworkProtocol::IPv6) {
+        uint8_t l4_proto{0};
+        uint16_t payload_len{0};
+        if (!decode_ipv6(reader, out, l4_proto, payload_len)) {
+            return out;
+        }
+
+        if (out.is_fragment && out.fragment_offset > 0) {
+            out.transport = TransportProtocol::None;
+            out.status = ParseStatus::Ok;
+            return out;
+        }
+
+        const uint32_t ext_len = out.l4_offset - (out.l3_offset + 40);
+        const uint32_t l4_wire = (payload_len >= ext_len) ? (payload_len - ext_len) : 0;
+
+        if (!decode_l4(reader, out, l4_proto, l4_wire)) {
+            return out;
+        }
+
+        out.status = ParseStatus::Ok;
+        return out;
+    }
+
     out.status = ParseStatus::Ok;
     return out;
 }
 
-}
+} 

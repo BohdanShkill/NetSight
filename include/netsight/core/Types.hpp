@@ -49,6 +49,14 @@ namespace netsight {
         Unknown = 65535
     };
 
+    enum class NetworkProtocol {
+        None,   
+        IPv4,   
+        IPv6,   
+        Arp,    
+        Other   
+    };
+
     std::string to_string(ProtocolType proto);
     std::string to_string(LinkType link);
 
