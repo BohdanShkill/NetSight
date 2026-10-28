@@ -7,20 +7,6 @@
 
 namespace netsight {
 
-namespace {
-
-LinkType to_link_type(std::uint32_t val) {
-    switch (val) {
-        case 0:   return LinkType::Null;
-        case 1:   return LinkType::Ethernet;
-        case 108: return LinkType::Loop;
-        case 113: return LinkType::LinuxSll;
-        default:  return LinkType::Unknown;
-    }
-}
-
-}
-
 PcapFileReader::PcapFileReader(
     std::ifstream stream,
     bool big_endian,
@@ -97,7 +83,7 @@ std::unique_ptr<PcapFileReader> PcapFileReader::open(
     std::uint32_t snaplen = big_endian ? r.u32_be() : r.u32_le();
     std::uint32_t network = big_endian ? r.u32_be() : r.u32_le();
 
-    LinkType link = to_link_type(network & 0xFFFF);
+    LinkType link = link_type_from_dlt(network & 0xFFFF);
 
     return std::unique_ptr<PcapFileReader>(new PcapFileReader(
         std::move(stream), big_endian, nanoseconds, snaplen, link, path));

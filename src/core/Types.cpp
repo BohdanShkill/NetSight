@@ -38,4 +38,14 @@ namespace netsight{
     return "Unknown";  
     }
 
+    LinkType link_type_from_dlt(std::uint32_t val) noexcept {
+    switch (val) {
+        case 0:   return LinkType::Null;
+        case 1:   return LinkType::Ethernet;
+        case 108: return LinkType::Loop;
+        case 113: return LinkType::LinuxSll;
+        default:  return LinkType::Unknown;
+    }
+}
+
 }
