@@ -21,6 +21,7 @@ cxx_std_17
 
 add_library(netsight_capture STATIC
     capture/Devices.cpp
+    capture/PcapRuntime.cpp
 )
 
 target_link_libraries(netsight_capture PUBLIC
@@ -42,4 +43,9 @@ if(WIN32)
     WIN32_LEAN_AND_MEAN
     NOMINMAX
     )
+endif()
+
+if(MSVC)
+    target_link_options(netsight_capture INTERFACE "/DELAYLOAD:wpcap.dll")
+    target_link_libraries(netsight_capture INTERFACE delayimp)
 endif()

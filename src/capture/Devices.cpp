@@ -1,4 +1,5 @@
 #include "netsight/capture/Devices.hpp"
+#include "netsight/capture/PcapRuntime.hpp"
 
 #include <pcap.h>
 #include <memory>
@@ -12,6 +13,9 @@
 
 namespace netsight {
     std::vector<NetworkInterface> list_interfaces(std::string& error_out) {
+        if (!ensure_pcap_loaded(error_out)) {
+            return {};
+        }
         error_out.clear();
         std::vector<NetworkInterface> result;
         
