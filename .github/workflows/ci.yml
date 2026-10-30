@@ -27,3 +27,5 @@ jobs:
               run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DNPCAP_SDK_DIR="C:/npcap-sdk"
             - run: cmake --build build --config Debug
             - run: ctest --test-dir build --output-on-failure -C Debug
+            - if: runner.os == 'Linux'
+              run: sudo env NETSIGHT_REQUIRE_LIVE=1 ctest --test-dir build -C Debug -L integration --output-on-failure
