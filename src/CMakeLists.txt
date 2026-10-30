@@ -22,6 +22,7 @@ cxx_std_17
 add_library(netsight_capture STATIC
     capture/Devices.cpp
     capture/PcapRuntime.cpp
+    capture/PcapLiveSource.cpp
 )
 
 target_link_libraries(netsight_capture PUBLIC

@@ -8,6 +8,7 @@
 
 #include "netsight/capture/PcapRuntime.hpp"
 #include "netsight/capture/Devices.hpp"
+#include "netsight/capture/PcapLiveSource.hpp"
 
 using namespace netsight;
 namespace {
@@ -131,4 +132,96 @@ TEST(CaptureLiveTest, BpfUnknownLinkType) {
     EXPECT_FALSE(validate_bpf("ip", LinkType::Unknown, 65535, error));
     EXPECT_FALSE(error.empty());
     EXPECT_NE(error.find("unknown link type"), std::string::npos);
+}
+
+TEST(CaptureLiveTest, OpenRejectsInvalidConfig) {
+    std::string error;
+    CaptureConfig cfg;
+
+    EXPECT_EQ(PcapLiveSource::open("", cfg, error), nullptr);
+    EXPECT_FALSE(error.empty());
+    EXPECT_NE(error.find("device"), std::string::npos);
+
+    cfg.snapshot_length = 0;
+    EXPECT_EQ(PcapLiveSource::open("any", cfg, error), nullptr);
+    EXPECT_FALSE(error.empty());
+
+    cfg.snapshot_length = 63;
+    EXPECT_EQ(PcapLiveSource::open("any", cfg, error), nullptr);
+    EXPECT_FALSE(error.empty());
+
+    cfg.snapshot_length = 262145;
+    EXPECT_EQ(PcapLiveSource::open("any", cfg, error), nullptr);
+    EXPECT_FALSE(error.empty());
+    cfg.snapshot_length = 65535;
+
+    cfg.read_timeout_ms = 0;
+    EXPECT_EQ(PcapLiveSource::open("any", cfg, error), nullptr);
+    EXPECT_FALSE(error.empty());
+    cfg.read_timeout_ms = 250;
+
+    cfg.buffer_size_bytes = 0;
+    EXPECT_EQ(PcapLiveSource::open("any", cfg, error), nullptr);
+    EXPECT_FALSE(error.empty());
+
+    cfg.buffer_size_bytes = 65535;
+    EXPECT_EQ(PcapLiveSource::open("any", cfg, error), nullptr);
+    EXPECT_FALSE(error.empty());
+
+    cfg.buffer_size_bytes = 268435457;
+    EXPECT_EQ(PcapLiveSource::open("any", cfg, error), nullptr);
+    EXPECT_FALSE(error.empty());
+}
+
+TEST(CaptureLiveTest, OpenNonexistentDeviceFails) {
+    std::string runtime_err;
+    if (!ensure_pcap_loaded(runtime_err)) {
+        REQUIRE_OR_SKIP("libpcap/Npcap runtime unavailable: " + runtime_err);
+        return;
+    }
+
+    std::string error;
+    CaptureConfig cfg;
+    auto source = PcapLiveSource::open("netsight-no-such-device-12345", cfg, error);
+
+    EXPECT_EQ(source, nullptr);
+    EXPECT_FALSE(error.empty());
+}
+
+TEST(CaptureLiveTest, OpenRejectsInvalidBpf) {
+    std::string runtime_err;
+    if (!ensure_pcap_loaded(runtime_err)) {
+        REQUIRE_OR_SKIP("libpcap/Npcap runtime unavailable: " + runtime_err);
+        return;
+    }
+
+    std::string if_err;
+    const auto ifaces = list_interfaces(if_err);
+    std::string loopback_name;
+    for (const auto& iface : ifaces) {
+        if (iface.is_loopback) {
+            loopback_name = iface.name;
+            break;
+        }
+    }
+
+    if (loopback_name.empty()) {
+        REQUIRE_OR_SKIP("no loopback interface found");
+        return;
+    }
+
+    CaptureConfig cfg;
+    cfg.bpf_filter = "tcp prt 80";
+
+    std::string error;
+    auto source = PcapLiveSource::open(loopback_name, cfg, error);
+
+    if (!source && error.find("permission denied") != std::string::npos) {
+        REQUIRE_OR_SKIP("insufficient permissions to open loopback: " + error);
+        return;
+    }
+
+    EXPECT_EQ(source, nullptr);
+    EXPECT_NE(error.find("invalid BPF"), std::string::npos)
+        << "Expected 'invalid BPF' in error, got: " << error;
 }
