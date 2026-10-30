@@ -2,10 +2,55 @@
 #include "netsight/capture/PcapRuntime.hpp"
 
 #include <pcap.h>
+#include <chrono>
+#include <exception>
 #include <memory>
 #include <utility>
 
 namespace netsight {
+
+namespace {
+
+struct CallbackContext {
+    PacketCallback on_packet;
+    pcap* handle{nullptr};
+    bool failed{false};
+    std::string error;
+};
+
+void pcap_trampoline(u_char* user, const struct pcap_pkthdr* hdr, const u_char* bytes) {
+    auto* ctx = reinterpret_cast<CallbackContext*>(user);
+    if (!ctx || ctx->failed) {
+        return;
+    }
+
+    try {
+        const auto sec = static_cast<std::int64_t>(hdr->ts.tv_sec);
+        const auto usec = static_cast<std::int64_t>(hdr->ts.tv_usec);
+        const std::int64_t us = sec * 1'000'000 + usec;
+
+        ctx->on_packet(RawPacket(
+            Timestamp{us},
+            reinterpret_cast<const Byte*>(bytes),
+            static_cast<std::size_t>(hdr->caplen),
+            static_cast<std::uint32_t>(hdr->len)
+        ));
+    } catch (const std::exception& e) {
+        ctx->failed = true;
+        ctx->error = "packet callback threw: " + std::string(e.what());
+        if (ctx->handle) {
+            pcap_breakloop(ctx->handle);
+        }
+    } catch (...) {
+        ctx->failed = true;
+        ctx->error = "packet callback threw unknown exception";
+        if (ctx->handle) {
+            pcap_breakloop(ctx->handle);
+        }
+    }
+}
+
+}
 
 void PcapLiveSource::PcapDeleter::operator()(pcap* p) const noexcept {
     if (p != nullptr) {
@@ -141,12 +186,78 @@ std::unique_ptr<PcapLiveSource> PcapLiveSource::open(
     return src;
 }
 
-StopReason PcapLiveSource::run(PacketCallback) {
+StopReason PcapLiveSource::run(PacketCallback on_packet) {
+    if (!handle_) {
+        set_error("pcap handle is null");
+        return StopReason::Error;
+    }
+
+    CallbackContext ctx{std::move(on_packet), handle_.get(), false, ""};
+    auto last_refresh = std::chrono::steady_clock::now();
+
+    while (!stop_requested()) {
+        int rc = pcap_dispatch(
+            handle_.get(),
+            -1,
+            pcap_trampoline,
+            reinterpret_cast<u_char*>(&ctx));
+
+        if (ctx.failed) {
+            refresh_stats();
+            set_error(ctx.error);
+            return StopReason::Error;
+        }
+
+        if (rc == PCAP_ERROR) {
+            refresh_stats();
+            set_error("capture failed: " + std::string(pcap_geterr(handle_.get())));
+            return StopReason::Error;
+        }
+
+        if (rc == PCAP_ERROR_BREAK && !stop_requested()) {
+            continue;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_refresh >= std::chrono::seconds(1)) {
+            refresh_stats();
+            last_refresh = now;
+        }
+    }
+
+    refresh_stats();
     return StopReason::StoppedByUser;
 }
 
-void PcapLiveSource::on_stop_requested() {}
+void PcapLiveSource::on_stop_requested() {
+    if (handle_) {
+        pcap_breakloop(handle_.get());
+    }
+}
 
-void PcapLiveSource::refresh_stats() noexcept {}
+void PcapLiveSource::refresh_stats() noexcept {
+    if (!handle_) {
+        return;
+    }
+
+    struct pcap_stat s;
+    if (pcap_stats(handle_.get(), &s) == 0) {
+        const auto cur_recv = static_cast<std::uint32_t>(s.ps_recv);
+        const auto cur_drop = static_cast<std::uint32_t>(s.ps_drop);
+        const auto cur_ifdrop = static_cast<std::uint32_t>(s.ps_ifdrop);
+
+        const std::uint32_t delta_recv = cur_recv - prev_recv_;
+        const std::uint32_t delta_drop = cur_drop - prev_drop_;
+        const std::uint32_t delta_ifdrop = cur_ifdrop - prev_ifdrop_;
+
+        prev_recv_ = cur_recv;
+        prev_drop_ = cur_drop;
+        prev_ifdrop_ = cur_ifdrop;
+
+        kernel_received_.fetch_add(delta_recv, std::memory_order_relaxed);
+        kernel_dropped_.fetch_add(delta_drop, std::memory_order_relaxed);
+        interface_dropped_.fetch_add(delta_ifdrop, std::memory_order_relaxed);
+    }
+}
 
 }
