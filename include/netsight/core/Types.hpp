@@ -59,6 +59,7 @@ namespace netsight {
 
     std::string to_string(ProtocolType proto);
     std::string to_string(LinkType link);
+    LinkType link_type_from_dlt(std::uint32_t val) noexcept;
 
 
     inline std::uint16_t net_to_host_16(std::uint16_t val) noexcept {

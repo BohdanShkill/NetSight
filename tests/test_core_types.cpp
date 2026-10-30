@@ -117,6 +117,16 @@ TEST(LinkTypeTest, TcpdumpNumericEquivalence) {
     EXPECT_EQ(static_cast<std::uint16_t>(LinkType::Unknown), 65535);
 }
 
+TEST(LinkTypeTest, LinkTypeFromDlt) {
+    EXPECT_EQ(link_type_from_dlt(0), LinkType::Null);
+    EXPECT_EQ(link_type_from_dlt(1), LinkType::Ethernet);
+    EXPECT_EQ(link_type_from_dlt(108), LinkType::Loop);
+    EXPECT_EQ(link_type_from_dlt(113), LinkType::LinuxSll);
+    EXPECT_EQ(link_type_from_dlt(127), LinkType::Unknown);
+    EXPECT_EQ(link_type_from_dlt(276), LinkType::Unknown);
+    EXPECT_EQ(link_type_from_dlt(65535), LinkType::Unknown);
+}
+
 TEST(IpAddressTest, FromIPv4AndToString) {
     const std::uint8_t raw[4] = {192, 168, 1, 100};
     const auto ip = IpAddress::from_ipv4(raw);
