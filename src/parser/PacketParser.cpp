@@ -275,6 +275,12 @@ bool decode_tcp(ByteReader& reader, ParsedPacket& out, uint32_t l4_wire_availabl
     reader.skip(6);
 
     const uint16_t hdr_len = static_cast<uint16_t>(doff * 4);
+
+    if (l4_wire_available < hdr_len) {
+        out.status = ParseStatus::Malformed;
+        return false;
+    }
+
     if (hdr_len > 20) {
         const std::size_t opt_len = hdr_len - 20;
         if (reader.remaining() < opt_len) {
@@ -299,6 +305,11 @@ bool decode_udp(ByteReader& reader, ParsedPacket& out, uint32_t l4_wire_availabl
         return false;
     }
 
+    if (l4_wire_available < 8) {
+    out.status = ParseStatus::Malformed;
+    return false;
+    }
+
     out.src_port = reader.u16_be();
     out.dst_port = reader.u16_be();
     const uint16_t udp_len = reader.u16_be();
@@ -317,9 +328,13 @@ bool decode_udp(ByteReader& reader, ParsedPacket& out, uint32_t l4_wire_availabl
     return true;
 }
 
-bool decode_icmp(ByteReader& reader, ParsedPacket& out) noexcept {
+bool decode_icmp(ByteReader& reader, ParsedPacket& out, uint32_t l4_wire_available) noexcept {
     if (reader.remaining() < 4) {
         out.status = ParseStatus::Truncated;
+        return false;
+    }
+    if (l4_wire_available < 4) {
+        out.status = ParseStatus::Malformed;
         return false;
     }
 
@@ -330,24 +345,25 @@ bool decode_icmp(ByteReader& reader, ParsedPacket& out) noexcept {
     out.src_port = 0;
     out.dst_port = 0;
     out.payload_offset = static_cast<uint32_t>(reader.position());
-    out.payload_length = static_cast<uint32_t>(reader.remaining());
+    const uint32_t expected_payload = l4_wire_available - 4;
+    out.payload_length = std::min(expected_payload, static_cast<uint32_t>(reader.remaining()));
     return true;
 }
 
 bool decode_l4(ByteReader& reader, ParsedPacket& out, uint8_t l4_proto, uint32_t l4_wire_available) noexcept {
     switch (l4_proto) {
+        case 1:
+            out.transport = TransportProtocol::ICMP;
+            return decode_icmp(reader, out, l4_wire_available);
         case 6:
             out.transport = TransportProtocol::TCP;
             return decode_tcp(reader, out, l4_wire_available);
         case 17:
             out.transport = TransportProtocol::UDP;
             return decode_udp(reader, out, l4_wire_available);
-        case 1:
-            out.transport = TransportProtocol::ICMP;
-            return decode_icmp(reader, out);
         case 58:
             out.transport = TransportProtocol::ICMPv6;
-            return decode_icmp(reader, out);
+            return decode_icmp(reader, out, l4_wire_available);
         default:
             out.transport = TransportProtocol::Other;
             return true;
@@ -410,7 +426,7 @@ ParsedPacket parse_packet(const RawPacket& packet, LinkType link_type) noexcept 
     out.network = classify_ether_type(ether_type);
     out.l3_offset = static_cast<uint32_t>(reader.position());
 
-        if (out.network == NetworkProtocol::IPv4) {
+    if (out.network == NetworkProtocol::IPv4) {
         uint8_t l4_proto{0};
         uint16_t ip_total_len{0};
         if (!decode_ipv4(reader, out, l4_proto, ip_total_len)) {
