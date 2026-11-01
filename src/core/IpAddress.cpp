@@ -1,5 +1,11 @@
 #include "netsight/core/IpAddress.hpp"
 
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#endif
+
 #include <cstring>
 #include <iomanip>
 #include <sstream>
@@ -61,6 +67,27 @@ std::string IpAddress::to_string() const {
         return oss.str();
     }
     return "None";
+}
+
+std::optional<IpAddress> parse_ip_address(const std::string& text) noexcept {
+    if (text.empty() || text.size() > 45) {
+        return std::nullopt;
+    }
+
+    if (text.find('\0') != std::string::npos) {
+        return std::nullopt;
+    }
+
+    std::uint8_t buf4[4];
+    if (inet_pton(AF_INET, text.c_str(), buf4) == 1) {
+        return IpAddress::from_ipv4(buf4);
+    }
+
+    std::uint8_t buf16[16];
+    if (inet_pton(AF_INET6, text.c_str(), buf16) == 1) {
+        return IpAddress::from_ipv6(buf16);
+    }
+    return std::nullopt;
 }
 
 }

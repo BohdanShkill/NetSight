@@ -352,15 +352,15 @@ bool decode_icmp(ByteReader& reader, ParsedPacket& out, uint32_t l4_wire_availab
 
 bool decode_l4(ByteReader& reader, ParsedPacket& out, uint8_t l4_proto, uint32_t l4_wire_available) noexcept {
     switch (l4_proto) {
+        case 6:
+        out.transport = TransportProtocol::TCP;
+        return decode_tcp(reader, out, l4_wire_available);
+        case 17:
+        out.transport = TransportProtocol::UDP;
+        return decode_udp(reader, out, l4_wire_available);
         case 1:
             out.transport = TransportProtocol::ICMP;
             return decode_icmp(reader, out, l4_wire_available);
-        case 6:
-            out.transport = TransportProtocol::TCP;
-            return decode_tcp(reader, out, l4_wire_available);
-        case 17:
-            out.transport = TransportProtocol::UDP;
-            return decode_udp(reader, out, l4_wire_available);
         case 58:
             out.transport = TransportProtocol::ICMPv6;
             return decode_icmp(reader, out, l4_wire_available);

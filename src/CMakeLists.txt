@@ -40,9 +40,14 @@ target_link_libraries(netsight_core PUBLIC
 )
 
 if(WIN32)
+    target_link_libraries(netsight_core PRIVATE ws2_32)
+    target_compile_definitions(netsight_core PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
     target_compile_definitions(netsight_capture PRIVATE
-    WIN32_LEAN_AND_MEAN
-    NOMINMAX
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
     )
 endif()
 

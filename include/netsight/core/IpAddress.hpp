@@ -8,6 +8,7 @@
 #include <functional>
 #include <string>
 #include <type_traits>
+#include <optional>
 
 namespace netsight {
 
@@ -29,7 +30,10 @@ struct IpAddress {
     bool operator<(const IpAddress& other) const noexcept;
 
     std::string to_string() const;
+
 };
+
+[[nodiscard]] std::optional<IpAddress> parse_ip_address(const std::string& text) noexcept;
 
 static_assert(std::is_trivially_copyable_v<IpAddress>,
               "IpAddress must be trivially copyable (zero heap allocations)");
