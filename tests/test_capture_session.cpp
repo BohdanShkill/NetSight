@@ -179,3 +179,212 @@ TEST(CaptureSessionTest, StartValidation) {
     EXPECT_NE(s8.last_error().find("session already started"), std::string::npos);
     s8.stop();
 }
+
+TEST(CaptureSessionTest, DropNewestUnderBackpressure) {
+    auto pkts = make_packets(200);
+    auto source = std::make_unique<FakePacketSource>(std::move(pkts), LinkType::Ethernet);
+
+    SessionConfig cfg;
+    cfg.queue_capacity = 4;
+    cfg.overflow = OverflowPolicy::DropNewest;
+
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool first_packet = true;
+    std::size_t delivered = 0;
+
+    std::unique_ptr<CaptureSession> session;
+    session = std::make_unique<CaptureSession>(
+        std::move(source),
+        cfg,
+        [&](const ParsedPacket&) {
+            if (first_packet) {
+                first_packet = false;
+                std::unique_lock<std::mutex> lock(mtx);
+                auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                while (std::chrono::steady_clock::now() < deadline) {
+                    if (session->counters().received >= 200) {
+                        break;
+                    }
+                    cv.wait_for(lock, std::chrono::milliseconds(10));
+                }
+            }
+            ++delivered;
+        }
+    );
+
+    ASSERT_TRUE(session->start());
+    EXPECT_TRUE(session->wait_for(std::chrono::seconds(5)));
+    session->stop();
+
+    const auto counters = session->counters();
+    EXPECT_GT(counters.dropped, 0u);
+    EXPECT_EQ(counters.received, counters.processed + counters.dropped);
+    EXPECT_EQ(counters.delivered, delivered);
+}
+
+TEST(CaptureSessionTest, BlockPolicyLosesNothing) {
+    auto pkts = make_packets(500);
+    auto source = std::make_unique<FakePacketSource>(std::move(pkts), LinkType::Ethernet);
+
+    SessionConfig cfg;
+    cfg.queue_capacity = 2;
+    cfg.overflow = OverflowPolicy::Block;
+
+    std::size_t delivered = 0;
+    CaptureSession session(
+        std::move(source),
+        cfg,
+        [&](const ParsedPacket&) {
+            ++delivered;
+            if (delivered % 50 == 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+    );
+
+    ASSERT_TRUE(session.start());
+    EXPECT_TRUE(session.wait_for(std::chrono::seconds(10)));
+    session.stop();
+
+    const auto counters = session.counters();
+    EXPECT_EQ(counters.dropped, 0u);
+    EXPECT_EQ(counters.received, 500u);
+    EXPECT_EQ(counters.processed, 500u);
+    EXPECT_EQ(counters.delivered, 500u);
+}
+
+TEST(CaptureSessionTest, StopWhileRunningReturnsPromptly) {
+    auto pkts = make_packets(50);
+    auto source = std::make_unique<FakePacketSource>(std::move(pkts), LinkType::Ethernet, std::nullopt, true);
+
+    SessionConfig cfg;
+    cfg.overflow = OverflowPolicy::Block;
+
+    CaptureSession session(std::move(source), cfg, [](const ParsedPacket&) {});
+    ASSERT_TRUE(session.start());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    const auto start_time = std::chrono::steady_clock::now();
+    session.stop();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start_time);
+
+    EXPECT_LT(elapsed.count(), 1000);
+    EXPECT_EQ(session.stop_reason(), StopReason::StoppedByUser);
+
+    const auto counters = session.counters();
+    EXPECT_EQ(counters.received, counters.processed + counters.dropped);
+}
+
+TEST(CaptureSessionTest, StopIsIdempotentAndSafeWithoutStart) {
+    {
+        auto source = std::make_unique<FakePacketSource>(std::vector<RawPacket>{}, LinkType::Ethernet);
+        CaptureSession session(std::move(source), SessionConfig{}, [](const ParsedPacket&) {});
+        session.stop();
+    }
+
+    {
+        auto pkts = make_packets(10);
+        auto source = std::make_unique<FakePacketSource>(std::move(pkts), LinkType::Ethernet);
+        CaptureSession session(std::move(source), SessionConfig{}, [](const ParsedPacket&) {});
+        ASSERT_TRUE(session.start());
+        session.stop();
+        session.stop();
+    }
+}
+
+TEST(CaptureSessionTest, DestructorStopsRunningSession) {
+    auto pkts = make_packets(100);
+    auto source = std::make_unique<FakePacketSource>(std::move(pkts), LinkType::Ethernet, std::nullopt, true);
+    {
+        CaptureSession session(std::move(source), SessionConfig{}, [](const ParsedPacket&) {});
+        ASSERT_TRUE(session.start());
+    }
+}
+
+TEST(CaptureSessionTest, SinkExceptionEndsWithErrorNoDeadlock) {
+    auto pkts = make_packets(1000);
+    auto source = std::make_unique<FakePacketSource>(std::move(pkts), LinkType::Ethernet);
+
+    SessionConfig cfg;
+    cfg.queue_capacity = 1;
+    cfg.overflow = OverflowPolicy::Block;
+
+    std::size_t delivered = 0;
+    CaptureSession session(
+        std::move(source),
+        cfg,
+        [&](const ParsedPacket&) {
+            ++delivered;
+            if (delivered == 3) {
+                throw std::runtime_error("boom");
+            }
+        }
+    );
+
+    ASSERT_TRUE(session.start());
+    EXPECT_TRUE(session.wait_for(std::chrono::seconds(5)));
+    EXPECT_EQ(session.stop_reason(), StopReason::Error);
+    EXPECT_NE(session.last_error().find("boom"), std::string::npos);
+    EXPECT_EQ(session.counters().delivered, 2u);
+
+    session.stop();
+}
+
+TEST(CaptureSessionTest, SourceErrorPropagates) {
+    auto pkts = make_packets(20);
+    auto source = std::make_unique<FakePacketSource>(std::move(pkts), LinkType::Ethernet, 5);
+
+    SessionConfig cfg;
+    cfg.overflow = OverflowPolicy::Block;
+
+    std::size_t delivered = 0;
+    CaptureSession session(
+        std::move(source),
+        cfg,
+        [&](const ParsedPacket&) {
+            ++delivered;
+        }
+    );
+
+    ASSERT_TRUE(session.start());
+    EXPECT_TRUE(session.wait_for(std::chrono::seconds(5)));
+    session.stop();
+
+    EXPECT_EQ(session.stop_reason(), StopReason::Error);
+    EXPECT_NE(session.last_error().find("Simulated"), std::string::npos);
+    EXPECT_EQ(delivered, 5u);
+}
+
+TEST(CaptureSessionTest, SourceStartFailureCleansUp) {
+    auto source = std::make_unique<FakePacketSource>(std::vector<RawPacket>{}, LinkType::Ethernet);
+    source->start([](RawPacket) {}, [](StopReason) {});
+    source->stop();
+
+    CaptureSession session(std::move(source), SessionConfig{}, [](const ParsedPacket&) {});
+    EXPECT_FALSE(session.start());
+    EXPECT_NE(session.last_error().find("source failed to start"), std::string::npos);
+}
+
+TEST(CaptureSessionTest, StopFromSinkDoesNotDeadlock) {
+    auto pkts = make_packets(100);
+    auto source = std::make_unique<FakePacketSource>(std::move(pkts), LinkType::Ethernet);
+
+    SessionConfig cfg;
+    cfg.overflow = OverflowPolicy::Block;
+
+    std::unique_ptr<CaptureSession> session;
+    session = std::make_unique<CaptureSession>(
+        std::move(source),
+        cfg,
+        [&](const ParsedPacket&) {
+            session->stop();
+        }
+    );
+
+    ASSERT_TRUE(session->start());
+    EXPECT_TRUE(session->wait_for(std::chrono::seconds(2)));
+    session->stop();
+}

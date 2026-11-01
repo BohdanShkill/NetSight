@@ -80,8 +80,14 @@ bool CaptureSession::start() {
             }
         },
         [this](StopReason r) {
-            source_reason_.store(r, std::memory_order_relaxed);
-            queue_->close();
+         source_reason_.store(r, std::memory_order_relaxed);
+         if (r == StopReason::Error && source_) {
+             std::lock_guard<std::mutex> err_lock(error_mutex_);
+             if (last_error_.empty()) {
+                 last_error_ = source_->last_error();
+             }
+         }
+         queue_->close();
         }
     );
 
@@ -182,7 +188,13 @@ SessionCounters CaptureSession::counters() const noexcept {
 
 std::string CaptureSession::last_error() const {
     std::lock_guard<std::mutex> lock(error_mutex_);
-    return last_error_;
+    if (!last_error_.empty()) {
+        return last_error_;
+    }
+    if (source_ && source_reason_.load(std::memory_order_relaxed) == StopReason::Error) {
+        return source_->last_error();
+    }
+    return "";
 }
 
 }
