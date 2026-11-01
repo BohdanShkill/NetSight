@@ -1,15 +1,23 @@
 #include <gtest/gtest.h>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <random>
+#include <string>
 #include <thread>
 #include <vector>
 
 #include "netsight/core/IpAddress.hpp"
+#include "netsight/parser/PacketParser.hpp"
 #include "netsight/parser/ParsedPacket.hpp"
 #include "netsight/pipeline/CaptureSession.hpp"
+#include "netsight/source/PcapFileReader.hpp"
 #include "support/FakePacketSource.hpp"
 #include "support/PacketBuilder.hpp"
+#include "support/PcapWriter.hpp"
+#include "support/ReadAll.hpp"
+#include "support/TempFile.hpp"
 
 using namespace netsight;
 using namespace netsight::test;
@@ -387,4 +395,201 @@ TEST(CaptureSessionTest, StopFromSinkDoesNotDeadlock) {
     ASSERT_TRUE(session->start());
     EXPECT_TRUE(session->wait_for(std::chrono::seconds(2)));
     session->stop();
+}
+
+TEST(CaptureSessionTest, EndToEndGeneratedPcap) {
+    const auto ip_target = *parse_ip_address("10.0.0.1");
+    std::mt19937 rng(42);
+
+    std::vector<RawPacket> packets;
+    packets.reserve(1000);
+
+    std::size_t gt_ip_delivered = 0;
+    std::size_t gt_port_delivered = 0;
+    std::map<TransportProtocol, std::size_t> gt_port_transports;
+
+    PacketFilter filter_ip;
+    filter_ip.ip = ip_target;
+
+    PacketFilter filter_port;
+    filter_port.port = 80;
+
+    for (std::size_t i = 0; i < 1000; ++i) {
+        const auto branch = rng() % 7;
+        RawPacket pkt(Timestamp{static_cast<std::int64_t>(i * 1000)}, nullptr, 0, 0);
+
+        if (branch == 0) {
+            pkt = PacketBuilder{}.ethernet(0x0800).ipv4({10, 0, 0, 1}, {192, 168, 1, 2}).tcp(12345, 80).build(Timestamp{static_cast<std::int64_t>(i * 1000)});
+        } else if (branch == 1) {
+            pkt = PacketBuilder{}.ethernet(0x0800).ipv4({192, 168, 1, 1}, {8, 8, 8, 8}, 17).udp(5000, 53).payload("dns").build(Timestamp{static_cast<std::int64_t>(i * 1000)});
+        } else if (branch == 2) {
+            pkt = PacketBuilder{}.ethernet(0x0800).ipv4({192, 168, 1, 1}, {1, 1, 1, 1}, 1).icmp(8, 0).build(Timestamp{static_cast<std::int64_t>(i * 1000)});
+        } else if (branch == 3) {
+            pkt = PacketBuilder{}.ethernet(0x0806).bytes(28, 0).build(Timestamp{static_cast<std::int64_t>(i * 1000)});
+        } else if (branch == 4) {
+            pkt = PacketBuilder{}.ethernet(0x86DD).ipv6().tcp(1000, 80).build(Timestamp{static_cast<std::int64_t>(i * 1000)});
+        } else if (branch == 5) {
+            pkt = PacketBuilder{}.ethernet(0x8100).vlan(100, 0x0800).ipv4({192, 168, 1, 10}, {10, 0, 0, 1}).tcp(2000, 80).build(Timestamp{static_cast<std::int64_t>(i * 1000)});
+        } else {
+            auto full = PacketBuilder{}.ethernet(0x0800).ipv4({192, 168, 1, 1}, {192, 168, 1, 2}).tcp(1234, 80).build(Timestamp{static_cast<std::int64_t>(i * 1000)});
+            pkt = RawPacket(full.timestamp, full.data.data(), 30, full.original_length);
+        }
+
+        auto parsed = parse_packet(pkt, LinkType::Ethernet);
+        if (filter_ip.matches(parsed)) {
+            ++gt_ip_delivered;
+        }
+        if (filter_port.matches(parsed)) {
+            ++gt_port_delivered;
+            gt_port_transports[parsed.transport]++;
+        }
+
+        packets.push_back(std::move(pkt));
+    }
+
+    TempFile tmp;
+    ASSERT_TRUE(write_pcap(tmp.path(), LinkType::Ethernet, packets));
+
+    {
+        std::string err;
+        auto reader = PcapFileReader::open(tmp.path().string(), err);
+        ASSERT_NE(reader, nullptr) << err;
+
+        SessionConfig cfg;
+        cfg.overflow = OverflowPolicy::Block;
+        cfg.filter = filter_ip;
+
+        std::size_t delivered = 0;
+        CaptureSession session(
+            std::move(reader),
+            cfg,
+            [&](const ParsedPacket&) {
+                ++delivered;
+            }
+        );
+
+        ASSERT_TRUE(session.start());
+        EXPECT_TRUE(session.wait_for(std::chrono::seconds(5)));
+        session.stop();
+
+        EXPECT_EQ(session.stop_reason(), StopReason::EndOfStream);
+        const auto counters = session.counters();
+        EXPECT_EQ(counters.dropped, 0u);
+        EXPECT_EQ(counters.processed, 1000u);
+        EXPECT_EQ(counters.delivered, gt_ip_delivered);
+        EXPECT_EQ(delivered, gt_ip_delivered);
+    }
+
+    {
+        std::string err;
+        auto reader = PcapFileReader::open(tmp.path().string(), err);
+        ASSERT_NE(reader, nullptr) << err;
+
+        SessionConfig cfg;
+        cfg.overflow = OverflowPolicy::Block;
+        cfg.filter = filter_port;
+
+        std::size_t delivered = 0;
+        std::map<TransportProtocol, std::size_t> actual_transports;
+        CaptureSession session(
+            std::move(reader),
+            cfg,
+            [&](const ParsedPacket& p) {
+                ++delivered;
+                actual_transports[p.transport]++;
+            }
+        );
+
+        ASSERT_TRUE(session.start());
+        EXPECT_TRUE(session.wait_for(std::chrono::seconds(5)));
+        session.stop();
+
+        EXPECT_EQ(session.stop_reason(), StopReason::EndOfStream);
+        const auto counters = session.counters();
+        EXPECT_EQ(counters.dropped, 0u);
+        EXPECT_EQ(counters.processed, 1000u);
+        EXPECT_EQ(counters.delivered, gt_port_delivered);
+        EXPECT_EQ(delivered, gt_port_delivered);
+        EXPECT_EQ(actual_transports, gt_port_transports);
+    }
+}
+
+TEST(CaptureSessionTest, GoldenFileMatchesDirectRead) {
+    const std::string golden_path = std::string(NETSIGHT_TEST_DATA_DIR) + "/lo_tcp.pcap";
+    std::string err;
+
+    auto direct_reader = PcapFileReader::open(golden_path, err);
+    ASSERT_NE(direct_reader, nullptr) << err;
+
+    auto direct_result = read_all(*direct_reader);
+    ASSERT_EQ(direct_result.reason, StopReason::EndOfStream);
+    const auto expected_count = direct_result.packets.size();
+    ASSERT_GT(expected_count, 0u);
+
+    auto session_reader = PcapFileReader::open(golden_path, err);
+    ASSERT_NE(session_reader, nullptr) << err;
+
+    std::size_t delivered = 0;
+    bool all_ok = true;
+    SessionConfig cfg;
+    cfg.overflow = OverflowPolicy::Block;
+
+    CaptureSession session(
+        std::move(session_reader),
+        cfg,
+        [&](const ParsedPacket& p) {
+            ++delivered;
+            if (p.status != ParseStatus::Ok) {
+                all_ok = false;
+            }
+        }
+    );
+
+    ASSERT_TRUE(session.start());
+    EXPECT_TRUE(session.wait_for(std::chrono::seconds(5)));
+    session.stop();
+
+    EXPECT_EQ(session.stop_reason(), StopReason::EndOfStream);
+    EXPECT_EQ(delivered, expected_count);
+    EXPECT_TRUE(all_ok);
+
+    const auto counters = session.counters();
+    EXPECT_EQ(counters.dropped, 0u);
+    EXPECT_EQ(counters.received, expected_count);
+    EXPECT_EQ(counters.processed, expected_count);
+    EXPECT_EQ(counters.delivered, expected_count);
+}
+
+TEST(CaptureSessionTest, EmptyPcapFinishesImmediately) {
+    TempFile tmp;
+    ASSERT_TRUE(write_pcap(tmp.path(), LinkType::Ethernet, {}));
+
+    std::string err;
+    auto reader = PcapFileReader::open(tmp.path().string(), err);
+    ASSERT_NE(reader, nullptr) << err;
+
+    std::size_t delivered = 0;
+    SessionConfig cfg;
+    cfg.overflow = OverflowPolicy::Block;
+
+    CaptureSession session(
+        std::move(reader),
+        cfg,
+        [&](const ParsedPacket&) {
+            ++delivered;
+        }
+    );
+
+    ASSERT_TRUE(session.start());
+    EXPECT_TRUE(session.wait_for(std::chrono::seconds(1)));
+    session.stop();
+
+    EXPECT_EQ(session.stop_reason(), StopReason::EndOfStream);
+    EXPECT_EQ(delivered, 0u);
+
+    const auto counters = session.counters();
+    EXPECT_EQ(counters.received, 0u);
+    EXPECT_EQ(counters.dropped, 0u);
+    EXPECT_EQ(counters.processed, 0u);
+    EXPECT_EQ(counters.delivered, 0u);
 }
