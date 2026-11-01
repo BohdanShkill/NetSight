@@ -4,6 +4,7 @@ add_library(netsight_core STATIC
     parser/PacketParser.cpp
     source/ThreadedPacketSource.cpp
     source/PcapFileReader.cpp
+    pipeline/PacketFilter.cpp
 )
 
 target_include_directories(netsight_core PUBLIC 
