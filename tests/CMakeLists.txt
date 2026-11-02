@@ -37,6 +37,7 @@ netsight_add_test(parser_link test_parser_link.cpp)
 netsight_add_test(parser_network test_parser_network.cpp)
 netsight_add_test(packet_filter test_packet_filter.cpp)
 netsight_add_test(capture_session test_capture_session.cpp)
+netsight_add_test(stats_aggregator test_stats_aggregator.cpp)
 
 set(CAPTURE_LIVE_EXTRA_LIBS netsight_capture)
 if(WIN32)

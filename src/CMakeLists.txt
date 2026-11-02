@@ -6,6 +6,7 @@ add_library(netsight_core STATIC
     source/PcapFileReader.cpp
     pipeline/PacketFilter.cpp
     pipeline/CaptureSession.cpp
+    analytics/StatsAggregator.cpp
 )
 
 target_include_directories(netsight_core PUBLIC 
