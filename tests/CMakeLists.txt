@@ -35,6 +35,8 @@ netsight_add_test(pcap_file_reader test_pcap_file_reader.cpp)
 netsight_add_test(bounded_queue test_bounded_queue.cpp)
 netsight_add_test(parser_link test_parser_link.cpp)
 netsight_add_test(parser_network test_parser_network.cpp)
+netsight_add_test(packet_filter test_packet_filter.cpp)
+netsight_add_test(capture_session test_capture_session.cpp)
 
 set(CAPTURE_LIVE_EXTRA_LIBS netsight_capture)
 if(WIN32)

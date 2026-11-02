@@ -209,3 +209,53 @@ TEST(TcpFlagsTest, IndividualFlags) {
     EXPECT_FALSE(syn_ack.fin());
     EXPECT_FALSE(syn_ack.rst());
 }
+
+TEST(IpAddressTest, ParseIpValid) {
+    const auto ip_v4 = parse_ip_address("192.168.1.1");
+    ASSERT_TRUE(ip_v4.has_value());
+    EXPECT_TRUE(ip_v4->is_v4());
+    EXPECT_EQ(ip_v4->to_string(), "192.168.1.1");
+
+    const auto ip_zero = parse_ip_address("0.0.0.0");
+    ASSERT_TRUE(ip_zero.has_value());
+    EXPECT_TRUE(ip_zero->is_v4());
+    EXPECT_EQ(ip_zero->to_string(), "0.0.0.0");
+
+    const auto ip_v6_loopback = parse_ip_address("::1");
+    ASSERT_TRUE(ip_v6_loopback.has_value());
+    EXPECT_TRUE(ip_v6_loopback->is_v6());
+    EXPECT_EQ(ip_v6_loopback->bytes[15], 1);
+    for (std::size_t i = 0; i < 15; ++i) {
+        EXPECT_EQ(ip_v6_loopback->bytes[i], 0);
+    }
+
+    const auto ip_v6_doc = parse_ip_address("2001:db8::1");
+    ASSERT_TRUE(ip_v6_doc.has_value());
+    EXPECT_TRUE(ip_v6_doc->is_v6());
+    EXPECT_EQ(ip_v6_doc->to_string(), "2001:db8:0:0:0:0:0:1");
+
+    const auto ip_v6_fe80 = parse_ip_address("fe80::1");
+    ASSERT_TRUE(ip_v6_fe80.has_value());
+    EXPECT_TRUE(ip_v6_fe80->is_v6());
+    EXPECT_EQ(ip_v6_fe80->bytes[0], 0xfe);
+    EXPECT_EQ(ip_v6_fe80->bytes[1], 0x80);
+    EXPECT_EQ(ip_v6_fe80->bytes[15], 1);
+}
+
+TEST(IpAddressTest, ParseIpInvalid) {
+    EXPECT_FALSE(parse_ip_address("").has_value());
+    EXPECT_FALSE(parse_ip_address("256.1.1.1").has_value());
+    EXPECT_FALSE(parse_ip_address("1.2.3").has_value());
+    EXPECT_FALSE(parse_ip_address("1.2.3.4.5").has_value());
+    EXPECT_FALSE(parse_ip_address("abc").has_value());
+    EXPECT_FALSE(parse_ip_address(" 1.2.3.4").has_value());
+    EXPECT_FALSE(parse_ip_address("1.2.3.4 ").has_value());
+    EXPECT_FALSE(parse_ip_address("2001:db8:::1").has_value());
+    EXPECT_FALSE(parse_ip_address("gggg::1").has_value());
+    EXPECT_FALSE(parse_ip_address(std::string(100, 'a')).has_value());
+}
+
+TEST(IpAddressTest, ParseIpRejectsEmbeddedNul) {
+    const std::string text("1.2.3.4\0junk", 12);
+    EXPECT_FALSE(parse_ip_address(text).has_value());
+}

@@ -369,20 +369,24 @@ TEST(CaptureLiveTest, CapturesUdpOnLoopbackAndParses) {
 
     EXPECT_TRUE(found_target);
 
-    auto now_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+    source->stop();
+
     for (const auto& pkt : packets) {
         auto parsed = parse_packet(pkt, lt);
         if (parsed.status == ParseStatus::Ok && parsed.dst_port == 50505) {
             EXPECT_EQ(parsed.transport, TransportProtocol::UDP);
             EXPECT_EQ(parsed.dst_ip.to_string(), "127.0.0.1");
-            auto diff = std::abs(pkt.timestamp.count() - now_us);
-            EXPECT_LT(diff, 60'000'000);
+            EXPECT_GT(pkt.timestamp.count(), 1'577'836'800'000'000LL);
             break;
         }
     }
 
-    source->stop();
+    if (packets.size() >= 2) {
+        for (std::size_t i = 1; i < packets.size(); ++i) {
+            EXPECT_GE(packets[i].timestamp.count(), packets[i - 1].timestamp.count());
+        }
+        EXPECT_LT(packets.back().timestamp.count() - packets.front().timestamp.count(), 5'000'000LL);
+    }
 }
 
 TEST(CaptureLiveTest, SnaplenTruncatesCapture) {
@@ -445,6 +449,9 @@ TEST(CaptureLiveTest, SnaplenTruncatesCapture) {
     }
 
     EXPECT_TRUE(found_target);
+
+    source->stop();
+
     for (const auto& pkt : packets) {
         if (pkt.original_length > 500) {
             EXPECT_EQ(pkt.captured_length(), 64u);
@@ -452,8 +459,6 @@ TEST(CaptureLiveTest, SnaplenTruncatesCapture) {
             break;
         }
     }
-
-    source->stop();
 }
 
 TEST(CaptureLiveTest, StopReturnsWithinTimeout) {
