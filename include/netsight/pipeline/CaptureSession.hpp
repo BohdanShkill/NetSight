@@ -26,10 +26,15 @@ enum class OverflowPolicy {
     Block
 };
 
+using TickCallback = std::function<void()>;
+
 struct SessionConfig {
+    //(8192 * 64KB) ~= 512MB
     std::size_t queue_capacity{8192};
     OverflowPolicy overflow{OverflowPolicy::DropNewest};
     PacketFilter filter{};
+    std::chrono::milliseconds tick_interval{500};
+    TickCallback on_tick{};
 };
 
 struct SessionCounters {
