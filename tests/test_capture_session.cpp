@@ -13,6 +13,7 @@
 #include "netsight/parser/ParsedPacket.hpp"
 #include "netsight/pipeline/CaptureSession.hpp"
 #include "netsight/source/PcapFileReader.hpp"
+#include "netsight/analytics/StatsAggregator.hpp"
 #include "support/FakePacketSource.hpp"
 #include "support/PacketBuilder.hpp"
 #include "support/PcapWriter.hpp"
@@ -592,4 +593,115 @@ TEST(CaptureSessionTest, EmptyPcapFinishesImmediately) {
     EXPECT_EQ(counters.dropped, 0u);
     EXPECT_EQ(counters.processed, 0u);
     EXPECT_EQ(counters.delivered, 0u);
+}
+
+TEST(CaptureSessionTest, InvalidTickIntervalRejected) {
+    auto source1 = std::make_unique<FakePacketSource>(std::vector<RawPacket>{}, LinkType::Ethernet);
+    SessionConfig cfg1;
+    cfg1.tick_interval = std::chrono::milliseconds(0);
+    CaptureSession s1(std::move(source1), cfg1, [](const ParsedPacket&) {});
+    EXPECT_FALSE(s1.start());
+    EXPECT_NE(s1.last_error().find("tick interval"), std::string::npos);
+
+    auto source2 = std::make_unique<FakePacketSource>(std::vector<RawPacket>{}, LinkType::Ethernet);
+    SessionConfig cfg2;
+    cfg2.tick_interval = std::chrono::milliseconds(-10);
+    CaptureSession s2(std::move(source2), cfg2, [](const ParsedPacket&) {});
+    EXPECT_FALSE(s2.start());
+    EXPECT_NE(s2.last_error().find("tick interval"), std::string::npos);
+}
+
+TEST(CaptureSessionTest, PeriodicTickFiresDuringIdleAndFinalTickOnStop) {
+    auto source = std::make_unique<FakePacketSource>(
+        std::vector<RawPacket>{},
+        LinkType::Ethernet,
+        std::nullopt,
+        true
+    );
+
+    std::atomic<int> tick_count{0};
+    std::mutex cv_m;
+    std::condition_variable cv;
+
+    SessionConfig cfg;
+    cfg.tick_interval = std::chrono::milliseconds(25);
+    cfg.on_tick = [&]() {
+        tick_count.fetch_add(1, std::memory_order_relaxed);
+        cv.notify_one();
+    };
+
+    CaptureSession session(std::move(source), cfg, [](const ParsedPacket&) {});
+    ASSERT_TRUE(session.start());
+
+    {
+        std::unique_lock<std::mutex> lock(cv_m);
+        cv.wait_for(lock, std::chrono::seconds(2), [&]() {
+            return tick_count.load(std::memory_order_relaxed) >= 2;
+        });
+    }
+
+    const int ticks_before_stop = tick_count.load(std::memory_order_relaxed);
+    EXPECT_GE(ticks_before_stop, 2);
+
+    session.stop();
+    EXPECT_TRUE(session.wait_for(std::chrono::seconds(2)));
+
+    const int ticks_after_stop = tick_count.load(std::memory_order_relaxed);
+    EXPECT_GT(ticks_after_stop, ticks_before_stop);
+}
+
+TEST(CaptureSessionTest, EndToEndSessionWithStatsAggregator) {
+    std::vector<RawPacket> pkts;
+    pkts.reserve(100);
+    for (std::size_t i = 0; i < 50; ++i) {
+        pkts.push_back(PacketBuilder{}.ethernet(0x0800).ipv4({10, 0, 0, 1}, {192, 168, 1, 1}).tcp(10000, 80).build(Timestamp{static_cast<std::int64_t>(i * 1000)}));
+    }
+    for (std::size_t i = 50; i < 100; ++i) {
+        pkts.push_back(PacketBuilder{}.ethernet(0x0800).ipv4({10, 0, 0, 2}, {192, 168, 1, 1}).tcp(10000, 443).build(Timestamp{static_cast<std::int64_t>(i * 1000)}));
+    }
+
+    auto source = std::make_unique<FakePacketSource>(std::move(pkts), LinkType::Ethernet);
+
+    StatsAggregator aggregator{};
+
+    SessionConfig cfg;
+    cfg.overflow = OverflowPolicy::Block;
+    cfg.filter.port = 80;
+    cfg.tick_interval = std::chrono::milliseconds(50);
+
+    CaptureSession* session_ptr = nullptr;
+    cfg.on_tick = [&]() {
+        if (session_ptr) {
+            const auto c = session_ptr->counters();
+            DropCounters drops{};
+            drops.filtered_out = c.processed - c.delivered;
+            drops.queue_dropped = c.dropped;
+            aggregator.publish(drops);
+        }
+    };
+
+    CaptureSession session(
+        std::move(source),
+        cfg,
+        [&](const ParsedPacket& pkt) {
+            aggregator.record(pkt);
+        }
+    );
+    session_ptr = &session;
+
+    ASSERT_TRUE(session.start());
+    EXPECT_TRUE(session.wait_for(std::chrono::seconds(5)));
+    session.stop();
+
+    const auto counters = session.counters();
+    EXPECT_EQ(counters.received, 100u);
+    EXPECT_EQ(counters.processed, 100u);
+    EXPECT_EQ(counters.delivered, 50u);
+
+    const auto snap = aggregator.latest_snapshot();
+    ASSERT_NE(snap, nullptr);
+    EXPECT_EQ(snap->total_packets, 50u);
+    EXPECT_EQ(snap->drops.filtered_out, 50u);
+    EXPECT_EQ(snap->drops.queue_dropped, 0u);
+    EXPECT_GE(snap->snapshot_seq, 1u);
 }

@@ -58,6 +58,12 @@ bool CaptureSession::start() {
         return false;
     }
 
+    if (cfg_.tick_interval.count() <= 0) {
+        std::lock_guard<std::mutex> err_lock(error_mutex_);
+        last_error_ = "tick interval must be > 0";
+        return false;
+    }
+
     if (source_->link_type() == LinkType::Unknown) {
         std::lock_guard<std::mutex> err_lock(error_mutex_);
         last_error_ = "unsupported link type";
@@ -108,22 +114,41 @@ bool CaptureSession::start() {
 
 void CaptureSession::worker_loop() {
     try {
+        const auto wait_slice = std::min(std::chrono::milliseconds(100), cfg_.tick_interval);
+        auto next_tick = std::chrono::steady_clock::now() + cfg_.tick_interval;
+
         while (true) {
-            auto item = queue_->pop_for(std::chrono::milliseconds(100));
+            auto item = queue_->pop_for(wait_slice);
             if (!item.has_value()) {
                 if (queue_->is_drained()) {
                     break;
+                }
+                if (cfg_.on_tick && std::chrono::steady_clock::now() >= next_tick) {
+                    cfg_.on_tick();
+                    next_tick = std::chrono::steady_clock::now() + cfg_.tick_interval;
                 }
                 continue;
             }
 
             auto parsed = parse_packet(*item, link_);
-            processed_.fetch_add(1, std::memory_order_relaxed);
+            const auto new_processed = processed_.fetch_add(1, std::memory_order_relaxed) + 1;
 
             if (cfg_.filter.matches(parsed)) {
                 sink_(parsed);
                 delivered_.fetch_add(1, std::memory_order_relaxed);
             }
+
+            if (cfg_.on_tick && (new_processed & 0x3FFu) == 0) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= next_tick) {
+                    cfg_.on_tick();
+                    next_tick = now + cfg_.tick_interval;
+                }
+            }
+        }
+
+        if (cfg_.on_tick) {
+            cfg_.on_tick();
         }
     } catch (const std::exception& e) {
         record_worker_error(std::string("sink threw: ") + e.what());
