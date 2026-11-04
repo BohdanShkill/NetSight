@@ -7,6 +7,7 @@ add_library(netsight_core STATIC
     pipeline/PacketFilter.cpp
     pipeline/CaptureSession.cpp
     analytics/StatsAggregator.cpp
+    analytics/SynFloodDetector.cpp
 )
 
 target_include_directories(netsight_core PUBLIC 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "netsight/analytics/Alert.hpp"
 #include "netsight/core/IpAddress.hpp"
 #include "netsight/core/Types.hpp"
 #include "netsight/parser/ParsedPacket.hpp"
@@ -124,6 +125,7 @@ struct DropCounters {
     std::uint64_t interface_dropped{0};
     std::uint64_t untracked_talker_packets{0};
     std::uint64_t untracked_port_packets{0};
+    std::uint64_t untracked_syn_targets{0};
 
     bool operator==(const DropCounters& rhs) const noexcept {
         return filtered_out == rhs.filtered_out &&
@@ -131,7 +133,8 @@ struct DropCounters {
                kernel_dropped == rhs.kernel_dropped &&
                interface_dropped == rhs.interface_dropped &&
                untracked_talker_packets == rhs.untracked_talker_packets &&
-               untracked_port_packets == rhs.untracked_port_packets;
+               untracked_port_packets == rhs.untracked_port_packets &&
+               untracked_syn_targets == rhs.untracked_syn_targets;
     }
 
     bool operator!=(const DropCounters& rhs) const noexcept {
@@ -155,6 +158,7 @@ struct StatsSnapshot {
     DropCounters drops{};
     std::vector<TalkerEntry> top_talkers{};
     std::vector<PortEntry> top_ports{};
+    std::vector<Alert> alerts{};
 };
 
 }
