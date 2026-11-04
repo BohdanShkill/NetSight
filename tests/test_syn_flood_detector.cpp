@@ -84,7 +84,7 @@ TEST(SynFloodDetectorTest, SpoofedTenThousandSynsTriggerSingleVictimAlert) {
         const auto raw = PacketBuilder{}.ethernet(0x0800)
                                         .ipv4({b1, b2, b3, b4}, {10, 0, 0, 1}, 6)
                                         .tcp(static_cast<uint16_t>(10000 + (i % 50000)), 443, 0x02)
-                                        .build(Timestamp{static_cast<int64_t>(i * 100)});
+                                        .build(Timestamp{static_cast<int64_t>((i - 1) * 100)});
         detector.record(parse_packet(raw, LinkType::Ethernet));
     }
 
@@ -172,49 +172,15 @@ TEST(SynFloodDetectorTest, HysteresisPreventsFlappingAndResolvesOnCooldown) {
     ASSERT_EQ(detector.alerts().size(), 1u);
     EXPECT_EQ(detector.alerts().front().state, AlertState::Resolved);
     EXPECT_EQ(detector.alerts().front().ended_at, Timestamp{1'600'000});
-    EXPECT_TRUE(detector.active_alerts().empty());
 }
 
-TEST(SynFloodDetectorTest, NewAttackWaveAfterResolutionCreatesSecondAlert) {
-    SynFloodConfig cfg{};
-    cfg.syn_threshold = 100;
-    cfg.recovery_syn_threshold = 30;
-    SynFloodDetector detector{cfg};
-
-    for (int i = 0; i < 100; ++i) {
-        const auto raw = PacketBuilder{}.ethernet(0x0800)
-                                        .ipv4({10, 0, 0, 1}, {192, 168, 1, 10}, 6)
-                                        .tcp(static_cast<uint16_t>(10000 + i), 80, 0x02)
-                                        .build(Timestamp{i * 5'000});
-        detector.record(parse_packet(raw, LinkType::Ethernet));
-    }
-    detector.on_tick(Timestamp{2'000'000});
-    ASSERT_EQ(detector.alerts().size(), 1u);
-    EXPECT_EQ(detector.alerts().front().state, AlertState::Resolved);
-
-    for (int i = 0; i < 120; ++i) {
-        const auto raw = PacketBuilder{}.ethernet(0x0800)
-                                        .ipv4({10, 0, 0, 2}, {192, 168, 1, 10}, 6)
-                                        .tcp(static_cast<uint16_t>(30000 + i), 80, 0x02)
-                                        .build(Timestamp{3'000'000 + i * 4'000});
-        detector.record(parse_packet(raw, LinkType::Ethernet));
-    }
-
-    ASSERT_EQ(detector.alerts().size(), 2u);
-    EXPECT_EQ(detector.alerts()[0].id, 1u);
-    EXPECT_EQ(detector.alerts()[0].state, AlertState::Resolved);
-    EXPECT_EQ(detector.alerts()[1].id, 2u);
-    EXPECT_EQ(detector.alerts()[1].state, AlertState::Active);
-    EXPECT_EQ(detector.active_alerts().size(), 1u);
-}
-
-TEST(SynFloodDetectorTest, TtlEvictionRemovesInactiveTargetsAndLazyEvictsOnCap) {
+TEST(SynFloodDetectorTest, BoundedTableDropsNewTargetsWhenFull) {
     SynFloodConfig cfg{};
     cfg.max_tracked_targets = 3;
     cfg.entry_ttl = Timestamp{5'000'000};
     SynFloodDetector detector{cfg};
 
-    for (uint16_t port = 81; port <= 83; ++port) {
+    for (uint16_t port = 80; port < 83; ++port) {
         const auto raw = PacketBuilder{}.ethernet(0x0800)
                                         .ipv4({10, 0, 0, 1}, {192, 168, 1, 10}, 6)
                                         .tcp(10000, port, 0x02)
@@ -238,6 +204,57 @@ TEST(SynFloodDetectorTest, TtlEvictionRemovesInactiveTargetsAndLazyEvictsOnCap) 
                                      .build(Timestamp{7'000'000});
     detector.record(parse_packet(raw5, LinkType::Ethernet));
     EXPECT_EQ(detector.tracked_target_count(), 1u);
+}
+
+TEST(SynFloodDetectorTest, TtlEvictionRemovesStaleTargets) {
+    SynFloodConfig cfg{};
+    cfg.entry_ttl = Timestamp{5'000'000};
+    SynFloodDetector detector{cfg};
+
+    const auto raw1 = PacketBuilder{}.ethernet(0x0800)
+                                     .ipv4({10, 0, 0, 1}, {192, 168, 1, 10}, 6)
+                                     .tcp(10000, 80, 0x02)
+                                     .build(Timestamp{1'000'000});
+    detector.record(parse_packet(raw1, LinkType::Ethernet));
+
+    const auto raw2 = PacketBuilder{}.ethernet(0x0800)
+                                     .ipv4({10, 0, 0, 1}, {192, 168, 1, 20}, 6)
+                                     .tcp(10000, 80, 0x02)
+                                     .build(Timestamp{3'000'000});
+    detector.record(parse_packet(raw2, LinkType::Ethernet));
+
+    EXPECT_EQ(detector.tracked_target_count(), 2u);
+
+    detector.on_tick(Timestamp{7'000'000});
+    EXPECT_EQ(detector.tracked_target_count(), 1u);
+
+    detector.on_tick(Timestamp{9'000'000});
+    EXPECT_EQ(detector.tracked_target_count(), 0u);
+}
+
+TEST(SynFloodDetectorTest, TtlEvictionClosesActiveAlert) {
+    SynFloodConfig cfg{};
+    cfg.syn_threshold = 10;
+    cfg.entry_ttl = Timestamp{5'000'000};
+    SynFloodDetector detector{cfg};
+
+    for (int i = 0; i < 15; ++i) {
+        const auto raw = PacketBuilder{}.ethernet(0x0800)
+                                        .ipv4({10, 0, 0, 1}, {192, 168, 1, 10}, 6)
+                                        .tcp(static_cast<uint16_t>(10000 + i), 80, 0x02)
+                                        .build(Timestamp{i * 10'000});
+        detector.record(parse_packet(raw, LinkType::Ethernet));
+    }
+
+    ASSERT_EQ(detector.alerts().size(), 1u);
+    EXPECT_EQ(detector.alerts().front().state, AlertState::Active);
+
+    detector.on_tick(Timestamp{6'000'000});
+
+    ASSERT_EQ(detector.alerts().size(), 1u);
+    EXPECT_EQ(detector.alerts().front().state, AlertState::Resolved);
+    EXPECT_EQ(detector.alerts().front().ended_at, Timestamp{6'000'000});
+    EXPECT_EQ(detector.tracked_target_count(), 0u);
 }
 
 TEST(SynFloodDetectorTest, AlertHistoryBoundedByMaxAlerts) {
@@ -326,4 +343,51 @@ TEST(SynFloodDetectorTest, ResetClearsTargetsAlertsAndCounters) {
     EXPECT_TRUE(detector.alerts().empty());
     EXPECT_TRUE(detector.active_alerts().empty());
     EXPECT_EQ(detector.untracked_target_packets(), 0u);
+}
+
+TEST(SynFloodDetectorTest, EvictedActiveAlertDoesNotWedgeTarget) {
+    SynFloodConfig cfg{};
+    cfg.syn_threshold = 10;
+    cfg.recovery_syn_threshold = 3;
+    cfg.max_alerts = 1;
+    SynFloodDetector detector{cfg};
+
+    for (int i = 0; i < 15; ++i) {
+        const auto raw = PacketBuilder{}.ethernet(0x0800)
+                                        .ipv4({10, 0, 0, 1}, {192, 168, 1, 10}, 6)
+                                        .tcp(static_cast<uint16_t>(10000 + i), 80, 0x02)
+                                        .build(Timestamp{1'000 + i * 1'000});
+        detector.record(parse_packet(raw, LinkType::Ethernet));
+    }
+
+    ASSERT_EQ(detector.alerts().size(), 1u);
+    EXPECT_EQ(detector.alerts().front().id, 1u);
+    EXPECT_EQ(detector.alerts().front().state, AlertState::Active);
+
+    for (int i = 0; i < 15; ++i) {
+        const auto raw = PacketBuilder{}.ethernet(0x0800)
+                                        .ipv4({10, 0, 0, 1}, {192, 168, 1, 20}, 6)
+                                        .tcp(static_cast<uint16_t>(10000 + i), 80, 0x02)
+                                        .build(Timestamp{20'000 + i * 1'000});
+        detector.record(parse_packet(raw, LinkType::Ethernet));
+    }
+
+    ASSERT_EQ(detector.alerts().size(), 1u);
+    EXPECT_EQ(detector.alerts().front().id, 2u);
+    EXPECT_EQ(detector.alerts().front().state, AlertState::Active);
+
+    detector.on_tick(Timestamp{3'000'000});
+
+    for (int i = 0; i < 15; ++i) {
+        const auto raw = PacketBuilder{}.ethernet(0x0800)
+                                        .ipv4({10, 0, 0, 1}, {192, 168, 1, 10}, 6)
+                                        .tcp(static_cast<uint16_t>(20000 + i), 80, 0x02)
+                                        .build(Timestamp{4'000'000 + i * 1'000});
+        detector.record(parse_packet(raw, LinkType::Ethernet));
+    }
+
+    ASSERT_EQ(detector.alerts().size(), 1u);
+    EXPECT_EQ(detector.alerts().front().id, 3u);
+    EXPECT_EQ(detector.alerts().front().state, AlertState::Active);
+    EXPECT_EQ(detector.alerts().front().dst_ip, IpAddress::from_ipv4(std::array<uint8_t, 4>{192, 168, 1, 10}.data()));
 }

@@ -79,15 +79,12 @@ private:
 
     void evaluate_target(const EndpointKey& key, TargetState& target, Timestamp ts);
     void evict_expired(Timestamp effective_now);
-    void append_alert_bounded(const Alert& alert);
-    Alert* find_alert_by_id(std::uint64_t id) noexcept;
 
     SynFloodConfig cfg_;
     std::unordered_map<EndpointKey, TargetState, EndpointKeyHash> targets_;
-    std::vector<Alert> alerts_;
-    std::uint64_t next_alert_id_{0};
+    AlertLog log_;
     std::uint64_t untracked_target_packets_{0};
     Timestamp max_seen_ts_{0};
 };
 
-} 
+}
