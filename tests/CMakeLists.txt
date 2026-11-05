@@ -40,6 +40,7 @@ netsight_add_test(capture_session test_capture_session.cpp)
 netsight_add_test(stats_aggregator test_stats_aggregator.cpp)
 netsight_add_test(syn_flood_detector test_syn_flood_detector.cpp)
 netsight_add_test(port_scan_detector test_port_scan_detector.cpp)
+netsight_add_test(traffic_analyzer test_traffic_analyzer.cpp)
 
 set(CAPTURE_LIVE_EXTRA_LIBS netsight_capture)
 if(WIN32)
