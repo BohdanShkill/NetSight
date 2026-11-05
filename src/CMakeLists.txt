@@ -9,6 +9,7 @@ add_library(netsight_core STATIC
     analytics/StatsAggregator.cpp
     analytics/SynFloodDetector.cpp
     analytics/PortScanDetector.cpp
+    analytics/TrafficAnalyzer.cpp
 )
 
 target_include_directories(netsight_core PUBLIC 
