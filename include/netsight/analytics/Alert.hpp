@@ -3,8 +3,12 @@
 #include "netsight/core/IpAddress.hpp"
 #include "netsight/core/Types.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace netsight {
 
@@ -71,6 +75,81 @@ struct Alert {
     bool operator!=(const Alert& rhs) const noexcept {
         return !(*this == rhs);
     }
+};
+
+class AlertLog {
+public:
+    explicit AlertLog(std::size_t max_alerts)
+        : max_alerts_(max_alerts == 0 ? 1 : max_alerts) {}
+
+    std::uint64_t open(Alert alert) {
+        alert.id = ++next_id_;
+
+        if (alerts_.size() >= max_alerts_) {
+            auto it = std::find_if(alerts_.begin(), alerts_.end(), [](const Alert& a) noexcept {
+                return a.state == AlertState::Resolved;
+            });
+
+            if (it != alerts_.end()) {
+                alerts_.erase(it);
+            } else {
+                alerts_.erase(alerts_.begin());
+            }
+        }
+
+        alerts_.push_back(std::move(alert));
+        return alerts_.back().id;
+    }
+
+    Alert* find(std::uint64_t id) noexcept {
+        for (auto it = alerts_.rbegin(); it != alerts_.rend(); ++it) {
+            if (it->id == id) {
+                return &(*it);
+            }
+        }
+        return nullptr;
+    }
+
+    const Alert* find(std::uint64_t id) const noexcept {
+        for (auto it = alerts_.rbegin(); it != alerts_.rend(); ++it) {
+            if (it->id == id) {
+                return &(*it);
+            }
+        }
+        return nullptr;
+    }
+
+    const std::vector<Alert>& all() const noexcept {
+        return alerts_;
+    }
+
+    std::vector<Alert> active() const {
+        std::vector<Alert> res;
+        for (const auto& a : alerts_) {
+            if (a.state == AlertState::Active) {
+                res.push_back(a);
+            }
+        }
+        return res;
+    }
+
+    void clear() noexcept {
+        alerts_.clear();
+        next_id_ = 0;
+    }
+
+    std::size_t size() const noexcept {
+        return alerts_.size();
+    }
+
+    std::size_t capacity() const noexcept {
+        return max_alerts_;
+    }
+
+private:
+    std::size_t max_alerts_{1};
+    std::vector<Alert> alerts_{};
+    std::uint64_t next_id_{0};
 };
 
 }

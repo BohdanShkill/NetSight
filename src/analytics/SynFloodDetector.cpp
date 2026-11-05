@@ -5,7 +5,7 @@
 namespace netsight {
 
 SynFloodDetector::SynFloodDetector(SynFloodConfig cfg)
-    : cfg_(cfg) {
+    : cfg_(cfg), log_(cfg_.max_alerts) {
     if (cfg_.syn_threshold == 0) {
         cfg_.syn_threshold = 1;
     }
@@ -88,7 +88,6 @@ void SynFloodDetector::evaluate_target(const EndpointKey& key, TargetState& targ
     if (target.active_alert_id == 0) {
         if (syns >= cfg_.syn_threshold && ratio <= cfg_.max_syn_ack_ratio) {
             Alert alert{};
-            alert.id = ++next_alert_id_;
             alert.type = AlertType::SynFlood;
             alert.state = AlertState::Active;
             alert.src_ip = IpAddress{};
@@ -102,20 +101,22 @@ void SynFloodDetector::evaluate_target(const EndpointKey& key, TargetState& targ
             alert.unique_ports = 0;
             alert.peak_rate_pps = rate_pps;
 
-            append_alert_bounded(alert);
-            target.active_alert_id = alert.id;
+            target.active_alert_id = log_.open(alert);
         }
     } else {
-        Alert* alert_ptr = find_alert_by_id(target.active_alert_id);
-        if (syns <= cfg_.recovery_syn_threshold) {
-            if (alert_ptr != nullptr) {
-                alert_ptr->state = AlertState::Resolved;
-                alert_ptr->ended_at = std::max(ts, alert_ptr->last_seen_at);
-                alert_ptr->syn_count = syns;
-                alert_ptr->syn_ack_count = syn_acks;
-            }
+        Alert* alert_ptr = log_.find(target.active_alert_id);
+        if (alert_ptr == nullptr) {
             target.active_alert_id = 0;
-        } else if (alert_ptr != nullptr) {
+            return;
+        }
+
+        if (syns <= cfg_.recovery_syn_threshold) {
+            alert_ptr->state = AlertState::Resolved;
+            alert_ptr->ended_at = std::max(ts, alert_ptr->last_seen_at);
+            alert_ptr->syn_count = syns;
+            alert_ptr->syn_ack_count = syn_acks;
+            target.active_alert_id = 0;
+        } else {
             if (ts > alert_ptr->last_seen_at) {
                 alert_ptr->last_seen_at = ts;
             }
@@ -151,7 +152,7 @@ void SynFloodDetector::evict_expired(Timestamp effective_now) {
         if (effective_now >= it->second.last_seen &&
             (effective_now - it->second.last_seen) >= cfg_.entry_ttl) {
             if (it->second.active_alert_id != 0) {
-                Alert* alert_ptr = find_alert_by_id(it->second.active_alert_id);
+                Alert* alert_ptr = log_.find(it->second.active_alert_id);
                 if (alert_ptr != nullptr && alert_ptr->state == AlertState::Active) {
                     alert_ptr->state = AlertState::Resolved;
                     alert_ptr->ended_at = effective_now;
@@ -165,41 +166,12 @@ void SynFloodDetector::evict_expired(Timestamp effective_now) {
     }
 }
 
-void SynFloodDetector::append_alert_bounded(const Alert& alert) {
-    if (alerts_.size() >= cfg_.max_alerts) {
-        auto it = std::find_if(alerts_.begin(), alerts_.end(), [](const Alert& a) {
-            return a.state == AlertState::Resolved;
-        });
-        if (it != alerts_.end()) {
-            alerts_.erase(it);
-        } else {
-            alerts_.erase(alerts_.begin());
-        }
-    }
-    alerts_.push_back(alert);
-}
-
-Alert* SynFloodDetector::find_alert_by_id(std::uint64_t id) noexcept {
-    for (auto it = alerts_.rbegin(); it != alerts_.rend(); ++it) {
-        if (it->id == id) {
-            return &(*it);
-        }
-    }
-    return nullptr;
-}
-
 const std::vector<Alert>& SynFloodDetector::alerts() const noexcept {
-    return alerts_;
+    return log_.all();
 }
 
 std::vector<Alert> SynFloodDetector::active_alerts() const {
-    std::vector<Alert> res;
-    for (const auto& a : alerts_) {
-        if (a.state == AlertState::Active) {
-            res.push_back(a);
-        }
-    }
-    return res;
+    return log_.active();
 }
 
 std::size_t SynFloodDetector::tracked_target_count() const noexcept {
@@ -212,8 +184,7 @@ std::uint64_t SynFloodDetector::untracked_target_packets() const noexcept {
 
 void SynFloodDetector::reset() {
     targets_.clear();
-    alerts_.clear();
-    next_alert_id_ = 0;
+    log_.clear();
     untracked_target_packets_ = 0;
     max_seen_ts_ = Timestamp{0};
 }
