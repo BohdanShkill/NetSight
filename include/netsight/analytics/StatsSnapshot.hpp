@@ -126,6 +126,7 @@ struct DropCounters {
     std::uint64_t untracked_talker_packets{0};
     std::uint64_t untracked_port_packets{0};
     std::uint64_t untracked_syn_targets{0};
+    std::uint64_t untracked_scan_sources{0};
 
     bool operator==(const DropCounters& rhs) const noexcept {
         return filtered_out == rhs.filtered_out &&
@@ -134,7 +135,8 @@ struct DropCounters {
                interface_dropped == rhs.interface_dropped &&
                untracked_talker_packets == rhs.untracked_talker_packets &&
                untracked_port_packets == rhs.untracked_port_packets &&
-               untracked_syn_targets == rhs.untracked_syn_targets;
+               untracked_syn_targets == rhs.untracked_syn_targets &&
+               untracked_scan_sources == rhs.untracked_scan_sources;
     }
 
     bool operator!=(const DropCounters& rhs) const noexcept {
