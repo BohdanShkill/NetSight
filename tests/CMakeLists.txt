@@ -42,6 +42,7 @@ netsight_add_test(syn_flood_detector test_syn_flood_detector.cpp)
 netsight_add_test(port_scan_detector test_port_scan_detector.cpp)
 netsight_add_test(traffic_analyzer test_traffic_analyzer.cpp)
 netsight_add_test(time test_time.cpp)
+netsight_add_test(csv_writer test_csv_writer.cpp)
 
 set(CAPTURE_LIVE_EXTRA_LIBS netsight_capture)
 if(WIN32)

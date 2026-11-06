@@ -2,6 +2,7 @@ add_library(netsight_core STATIC
     core/Types.cpp
     core/IpAddress.cpp
     core/Time.cpp
+    export/CsvWriter.cpp
     parser/PacketParser.cpp
     source/ThreadedPacketSource.cpp
     source/PcapFileReader.cpp
