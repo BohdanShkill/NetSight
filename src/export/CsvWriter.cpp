@@ -133,4 +133,105 @@ void write_summary_csv(std::ostream& out, const StatsSnapshot& snap, const CsvMe
     }
 }
 
+TimeSeriesCsvWriter::TimeSeriesCsvWriter(std::ostream& out, Timestamp interval)
+    : out_(out),
+      interval_(interval.count() <= 0 ? Timestamp{1'000'000} : interval) {
+    try {
+        out_.imbue(std::locale::classic());
+        out_ << "interval_start,packets,bytes,tcp_packets,udp_packets,icmp_packets,other_packets,parse_errors,dropped,active_alerts\r\n";
+        out_.flush();
+    } catch (...) {
+    }
+}
+
+bool TimeSeriesCsvWriter::starts_new_interval(Timestamp pkt_ts) noexcept {
+    if (pkt_ts.count() <= 0) {
+        return false;
+    }
+
+    const auto interval_us = interval_.count();
+    const auto ts_us = pkt_ts.count();
+    const auto start_us = ts_us - (ts_us % interval_us);
+    const Timestamp start{start_us};
+
+    if (row_start_.count() == 0) {
+        row_start_ = start;
+        return false;
+    }
+
+    if (start <= row_start_) {
+        return false;
+    }
+
+    next_start_ = start;
+    return true;
+}
+
+void TimeSeriesCsvWriter::write_row(const StatsSnapshot& snap) {
+    if (row_start_.count() == 0) {
+        return;
+    }
+
+    try {
+        const Totals cur{
+            snap.total_packets,
+            snap.total_wire_bytes,
+            snap.l4.tcp.packets,
+            snap.l4.udp.packets,
+            snap.l4.icmp.packets + snap.l4.icmpv6.packets,
+            snap.status.truncated + snap.status.malformed + snap.status.unsupported_link,
+            snap.drops.queue_dropped + snap.drops.kernel_dropped
+        };
+
+        auto delta = [](std::uint64_t c, std::uint64_t p) noexcept -> std::uint64_t {
+            return c >= p ? c - p : c;
+        };
+
+        const auto d_packets = delta(cur.packets, prev_.packets);
+        const auto d_bytes = delta(cur.wire_bytes, prev_.wire_bytes);
+        const auto d_tcp = delta(cur.tcp_packets, prev_.tcp_packets);
+        const auto d_udp = delta(cur.udp_packets, prev_.udp_packets);
+        const auto d_icmp = delta(cur.icmp_packets, prev_.icmp_packets);
+        const auto d_parse_errors = delta(cur.parse_errors, prev_.parse_errors);
+        const auto d_dropped = delta(cur.dropped, prev_.dropped);
+
+        const auto l4_sum = d_tcp + d_udp + d_icmp;
+        const auto other_packets = d_packets >= l4_sum ? d_packets - l4_sum : 0;
+
+        std::size_t active_alerts = 0;
+        for (const auto& a : snap.alerts) {
+            if (a.state == AlertState::Active) {
+                ++active_alerts;
+            }
+        }
+
+        out_ << format_iso8601_utc(row_start_) << ','
+             << d_packets << ','
+             << d_bytes << ','
+             << d_tcp << ','
+             << d_udp << ','
+             << d_icmp << ','
+             << other_packets << ','
+             << d_parse_errors << ','
+             << d_dropped << ','
+             << active_alerts << "\r\n";
+
+        out_.flush();
+
+        prev_ = cur;
+        ++rows_;
+        row_start_ = next_start_;
+        next_start_ = Timestamp{0};
+    } catch (...) {
+    }
+}
+
+std::size_t TimeSeriesCsvWriter::rows_written() const noexcept {
+    return rows_;
+}
+
+bool TimeSeriesCsvWriter::ok() const {
+    return !out_.fail();
+}
+
 }
