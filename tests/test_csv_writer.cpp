@@ -1,14 +1,24 @@
 #include <gtest/gtest.h>
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <locale>
+#include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
+#include "netsight/analytics/TrafficAnalyzer.hpp"
 #include "netsight/export/CsvWriter.hpp"
+#include "netsight/pipeline/CaptureSession.hpp"
+#include "support/FakePacketSource.hpp"
+#include "support/PacketBuilder.hpp"
 #include "support/TempFile.hpp"
 
 using namespace netsight;
+using namespace netsight::test;
+
+namespace {
 
 struct CommaNumPunct : std::numpunct<char> {
 protected:
@@ -16,6 +26,30 @@ protected:
     char do_thousands_sep() const override { return '.'; }
     std::string do_grouping() const override { return "\3"; }
 };
+
+std::vector<RawPacket> generate_test_traffic(std::size_t total_packets, int64_t duration_us) {
+    std::vector<RawPacket> pkts;
+    pkts.reserve(total_packets);
+
+    const int64_t step_us = duration_us / static_cast<int64_t>(total_packets);
+    for (std::size_t i = 0; i < total_packets; ++i) {
+        const int64_t t = 10'000 + static_cast<int64_t>(i) * step_us;
+        if (i % 2 == 0) {
+            pkts.push_back(PacketBuilder{}.ethernet(0x0800)
+                                          .ipv4({10, 0, 0, 1}, {10, 0, 0, 2}, 6)
+                                          .tcp(static_cast<uint16_t>(10000 + (i % 1000)), 80, 0x10)
+                                          .build(Timestamp{t}));
+        } else {
+            pkts.push_back(PacketBuilder{}.ethernet(0x0800)
+                                          .ipv4({10, 0, 0, 1}, {10, 0, 0, 2}, 17)
+                                          .udp(static_cast<uint16_t>(10000 + (i % 1000)), 53)
+                                          .build(Timestamp{t}));
+        }
+    }
+    return pkts;
+}
+
+}
 
 TEST(CsvWriterTest, EscapeLeavesPlainFieldsUntouched) {
     EXPECT_EQ(csv_escape("10.0.0.1"), "10.0.0.1");
@@ -35,7 +69,7 @@ TEST(CsvWriterTest, HeaderWrittenOnConstruction) {
     TimeSeriesCsvWriter writer(oss);
 
     EXPECT_EQ(oss.str(), "interval_start,packets,bytes,tcp_packets,udp_packets,icmp_packets,other_packets,parse_errors,dropped,active_alerts\r\n");
-    EXPECT_EQ(writer.rows_written(), 0);
+    EXPECT_EQ(writer.rows_written(), 0u);
     EXPECT_TRUE(writer.ok());
 }
 
@@ -46,7 +80,7 @@ TEST(CsvWriterTest, SameIntervalDoesNotCloseRow) {
     EXPECT_FALSE(writer.starts_new_interval(Timestamp{1'200'000}));
     EXPECT_FALSE(writer.starts_new_interval(Timestamp{1'500'000}));
     EXPECT_FALSE(writer.starts_new_interval(Timestamp{1'999'999}));
-    EXPECT_EQ(writer.rows_written(), 0);
+    EXPECT_EQ(writer.rows_written(), 0u);
 }
 
 TEST(CsvWriterTest, NextIntervalClosesRowWithDeltas) {
@@ -66,7 +100,7 @@ TEST(CsvWriterTest, NextIntervalClosesRowWithDeltas) {
     snap2.total_wire_bytes = 500;
     writer.write_row(snap2);
 
-    EXPECT_EQ(writer.rows_written(), 2);
+    EXPECT_EQ(writer.rows_written(), 2u);
 
     const std::string csv = oss.str();
     EXPECT_NE(csv.find("1970-01-01T00:00:01.000000Z,3,300,"), std::string::npos);
@@ -103,7 +137,7 @@ TEST(CsvWriterTest, GapsAreNotFilled) {
     s2.total_packets = 3;
     writer.write_row(s2);
 
-    EXPECT_EQ(writer.rows_written(), 2);
+    EXPECT_EQ(writer.rows_written(), 2u);
 
     const std::string csv = oss.str();
     EXPECT_NE(csv.find("1970-01-01T00:00:01.000000Z"), std::string::npos);
@@ -122,7 +156,7 @@ TEST(CsvWriterTest, HugeTimeJumpProducesBoundedOutput) {
     writer.write_row(s1);
     writer.write_row(s1);
 
-    EXPECT_EQ(writer.rows_written(), 2);
+    EXPECT_EQ(writer.rows_written(), 2u);
 }
 
 TEST(CsvWriterTest, OutOfOrderPacketStaysInCurrentInterval) {
@@ -131,7 +165,7 @@ TEST(CsvWriterTest, OutOfOrderPacketStaysInCurrentInterval) {
 
     EXPECT_FALSE(writer.starts_new_interval(Timestamp{2'400'000}));
     EXPECT_FALSE(writer.starts_new_interval(Timestamp{1'800'000}));
-    EXPECT_EQ(writer.rows_written(), 0);
+    EXPECT_EQ(writer.rows_written(), 0u);
 }
 
 TEST(CsvWriterTest, NonPositiveTimestampsIgnored) {
@@ -197,29 +231,35 @@ TEST(CsvWriterTest, FinalWriteIsIdempotent) {
     s.total_packets = 1;
 
     writer.write_row(s);
-    EXPECT_EQ(writer.rows_written(), 1);
+    EXPECT_EQ(writer.rows_written(), 1u);
 
     writer.write_row(s);
-    EXPECT_EQ(writer.rows_written(), 1);
+    EXPECT_EQ(writer.rows_written(), 1u);
 
     std::ostringstream empty_oss;
     TimeSeriesCsvWriter empty_writer(empty_oss);
     empty_writer.write_row(s);
-    EXPECT_EQ(empty_writer.rows_written(), 0);
+    EXPECT_EQ(empty_writer.rows_written(), 0u);
     EXPECT_EQ(empty_oss.str(), "interval_start,packets,bytes,tcp_packets,udp_packets,icmp_packets,other_packets,parse_errors,dropped,active_alerts\r\n");
 }
 
 TEST(CsvWriterTest, NumbersAreLocaleIndependent) {
-    std::ostringstream oss;
-    oss.imbue(std::locale(oss.getloc(), new CommaNumPunct()));
-
     StatsSnapshot snap{};
     snap.total_packets = 10;
     snap.total_wire_bytes = 1234567;
     snap.packets_per_second = 4550.0;
 
-    write_summary_csv(oss, snap);
-    const std::string csv = oss.str();
+    std::ostringstream ts_oss;
+    ts_oss.imbue(std::locale(ts_oss.getloc(), new CommaNumPunct()));
+    TimeSeriesCsvWriter writer(ts_oss, Timestamp{1'000'000});
+    EXPECT_FALSE(writer.starts_new_interval(Timestamp{1'000'000}));
+    writer.write_row(snap);
+    EXPECT_NE(ts_oss.str().find(",10,1234567,"), std::string::npos);
+
+    std::ostringstream sum_oss;
+    sum_oss.imbue(std::locale(sum_oss.getloc(), new CommaNumPunct()));
+    write_summary_csv(sum_oss, snap);
+    const std::string csv = sum_oss.str();
 
     EXPECT_NE(csv.find("totals,,wire_bytes,1234567\r\n"), std::string::npos);
     EXPECT_NE(csv.find("totals,,packets_per_second,4550.000\r\n"), std::string::npos);
@@ -318,7 +358,7 @@ TEST(CsvWriterTest, FileIsCrlfAndFlushedPerRow) {
         ASSERT_TRUE(ifs.is_open());
         std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
 
-        EXPECT_EQ(writer.rows_written(), 2);
+        EXPECT_EQ(writer.rows_written(), 2u);
         EXPECT_EQ(content.find("\r\r\n"), std::string::npos);
 
         std::size_t crlf_count = 0;
@@ -327,14 +367,108 @@ TEST(CsvWriterTest, FileIsCrlfAndFlushedPerRow) {
             ++crlf_count;
             pos += 2;
         }
-        EXPECT_EQ(crlf_count, 3);
+        EXPECT_EQ(crlf_count, 3u);
     }
 }
 
 TEST(CsvWriterTest, FailedStreamNeverThrows) {
-    std::ostringstream oss;
-    oss.setstate(std::ios::badbit);
-    StatsSnapshot snap{};
+    std::ostringstream bad_ts;
+    bad_ts.setstate(std::ios::badbit);
+    TimeSeriesCsvWriter writer(bad_ts);
+    EXPECT_FALSE(writer.ok());
+    EXPECT_FALSE(writer.starts_new_interval(Timestamp{1'000'000}));
 
-    EXPECT_NO_THROW(write_summary_csv(oss, snap));
+    StatsSnapshot snap{};
+    snap.total_packets = 1;
+    EXPECT_NO_THROW(writer.write_row(snap));
+    EXPECT_FALSE(writer.ok());
+
+    std::ostringstream bad_sum;
+    bad_sum.setstate(std::ios::badbit);
+    EXPECT_NO_THROW(write_summary_csv(bad_sum, snap));
+}
+
+TEST(CsvWriterTest, EndToEndReplayTimeseriesIsDeterministic) {
+    const auto pkts = generate_test_traffic(1100, 5'500'000);
+
+    auto run_replay = [&pkts](std::chrono::milliseconds tick_interval) -> std::string {
+        std::ostringstream oss;
+        TimeSeriesCsvWriter writer(oss, Timestamp{1'000'000});
+        TrafficAnalyzer analyzer{};
+
+        auto source = std::make_unique<FakePacketSource>(pkts, LinkType::Ethernet);
+
+        SessionConfig cfg{};
+        cfg.overflow = OverflowPolicy::Block;
+        cfg.tick_interval = tick_interval;
+
+        CaptureSession* session_ptr = nullptr;
+
+        auto get_drops = [&]() noexcept -> DropCounters {
+            if (!session_ptr) {
+                return DropCounters{};
+            }
+            const auto c = session_ptr->counters();
+            DropCounters drops{};
+            drops.filtered_out = c.processed - c.delivered;
+            drops.queue_dropped = c.dropped;
+            return drops;
+        };
+
+        CaptureSession session(
+            std::move(source),
+            cfg,
+            [&](const ParsedPacket& p) {
+                if (writer.starts_new_interval(p.timestamp)) {
+                    const auto snap = analyzer.on_tick(Timestamp{0}, get_drops());
+                    if (snap) {
+                        writer.write_row(*snap);
+                    }
+                }
+                analyzer.record(p);
+            }
+        );
+        session_ptr = &session;
+
+        EXPECT_TRUE(session.start());
+        EXPECT_TRUE(session.wait_for(std::chrono::seconds(5)));
+        session.stop();
+
+        const auto final_snap = analyzer.on_tick(Timestamp{0}, get_drops());
+        if (final_snap) {
+            writer.write_row(*final_snap);
+        }
+
+        EXPECT_EQ(writer.rows_written(), 6u);
+        return oss.str();
+    };
+
+    const auto csv1 = run_replay(std::chrono::milliseconds(1));
+    const auto csv2 = run_replay(std::chrono::milliseconds(10'000));
+
+    EXPECT_EQ(csv1, csv2);
+
+    std::istringstream iss(csv1);
+    std::string line;
+    ASSERT_TRUE(std::getline(iss, line));
+
+    std::uint64_t total_packets_in_csv = 0;
+    std::size_t rows_count = 0;
+    while (std::getline(iss, line)) {
+        if (line.empty() || line == "\r") {
+            continue;
+        }
+
+        const auto first_comma = line.find(',');
+        ASSERT_NE(first_comma, std::string::npos);
+        const auto second_comma = line.find(',', first_comma + 1);
+        ASSERT_NE(second_comma, std::string::npos);
+
+        const auto packets_str = line.substr(first_comma + 1, second_comma - first_comma - 1);
+        total_packets_in_csv += std::stoull(packets_str);
+        ++rows_count;
+    }
+
+    EXPECT_EQ(rows_count, 6u);
+    EXPECT_EQ(total_packets_in_csv, pkts.size());
 }

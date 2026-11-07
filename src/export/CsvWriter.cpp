@@ -1,9 +1,10 @@
 #include "netsight/export/CsvWriter.hpp"
 #include "netsight/core/Time.hpp"
 
-#include <cstdio>
+#include <iomanip>
 #include <locale>
 #include <ostream>
+#include <sstream>
 
 namespace netsight {
 
@@ -31,6 +32,10 @@ void write_summary_csv(std::ostream& out, const StatsSnapshot& snap, const CsvMe
     try {
         out.imbue(std::locale::classic());
 
+        std::ostringstream fmt;
+        fmt.imbue(std::locale::classic());
+        fmt << std::fixed << std::setprecision(3);
+
         auto put = [&](std::string_view section, std::string_view item, std::string_view metric, std::string_view value) {
             out << csv_escape(section) << ','
                 << csv_escape(item) << ','
@@ -39,13 +44,17 @@ void write_summary_csv(std::ostream& out, const StatsSnapshot& snap, const CsvMe
         };
 
         auto put_u64 = [&](std::string_view section, std::string_view item, std::string_view metric, std::uint64_t val) {
-            put(section, item, metric, std::to_string(val));
+            fmt.str("");
+            fmt.clear();
+            fmt << val;
+            put(section, item, metric, fmt.str());
         };
 
         auto put_double = [&](std::string_view section, std::string_view item, std::string_view metric, double val) {
-            char buf[64];
-            std::snprintf(buf, sizeof(buf), "%.3f", val);
-            put(section, item, metric, buf);
+            fmt.str("");
+            fmt.clear();
+            fmt << val;
+            put(section, item, metric, fmt.str());
         };
 
         out << "section,item,metric,value\r\n";
@@ -154,8 +163,9 @@ bool TimeSeriesCsvWriter::starts_new_interval(Timestamp pkt_ts) noexcept {
     const auto start_us = ts_us - (ts_us % interval_us);
     const Timestamp start{start_us};
 
-    if (row_start_.count() == 0) {
+    if (!has_row_) {
         row_start_ = start;
+        has_row_ = true;
         return false;
     }
 
@@ -168,7 +178,7 @@ bool TimeSeriesCsvWriter::starts_new_interval(Timestamp pkt_ts) noexcept {
 }
 
 void TimeSeriesCsvWriter::write_row(const StatsSnapshot& snap) {
-    if (row_start_.count() == 0) {
+    if (!has_row_) {
         return;
     }
 
@@ -220,8 +230,14 @@ void TimeSeriesCsvWriter::write_row(const StatsSnapshot& snap) {
 
         prev_ = cur;
         ++rows_;
-        row_start_ = next_start_;
-        next_start_ = Timestamp{0};
+
+        if (next_start_.count() > 0) {
+            row_start_ = next_start_;
+            next_start_ = Timestamp{0};
+        } else {
+            has_row_ = false;
+            row_start_ = Timestamp{0};
+        }
     } catch (...) {
     }
 }

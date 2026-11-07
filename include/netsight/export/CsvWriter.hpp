@@ -49,6 +49,7 @@ private:
     Timestamp next_start_{0};
     Totals prev_{};
     std::size_t rows_{0};
+    bool has_row_{false};
 };
 
 }
