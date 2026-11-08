@@ -47,6 +47,10 @@ netsight_add_test(json_serializer test_json_serializer.cpp
     LIBS nlohmann_json::nlohmann_json
 )
 
+netsight_add_test(rest_server test_rest_server.cpp
+    LIBS httplib::httplib nlohmann_json::nlohmann_json
+)
+
 set(CAPTURE_LIVE_EXTRA_LIBS netsight_capture)
 if(WIN32)
     list(APPEND CAPTURE_LIVE_EXTRA_LIBS ws2_32)

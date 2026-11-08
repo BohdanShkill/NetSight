@@ -4,6 +4,7 @@ add_library(netsight_core STATIC
     core/Time.cpp
     export/CsvWriter.cpp
     export/JsonSerializer.cpp
+    export/RestServer.cpp
     parser/PacketParser.cpp
     source/ThreadedPacketSource.cpp
     source/PcapFileReader.cpp
@@ -22,6 +23,7 @@ target_include_directories(netsight_core PUBLIC
 target_link_libraries(netsight_core PRIVATE
     netsight_warnings
     nlohmann_json::nlohmann_json
+    httplib::httplib
 )
 
 target_compile_features(netsight_core PUBLIC 
