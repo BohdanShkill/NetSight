@@ -60,3 +60,7 @@ netsight_add_test(capture_live test_capture_live.cpp
     LIBS ${CAPTURE_LIVE_EXTRA_LIBS}
     LABELS integration
 )
+
+netsight_add_test(cli test_cli.cpp
+    LIBS netsight_app
+)
