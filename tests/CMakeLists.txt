@@ -43,6 +43,9 @@ netsight_add_test(port_scan_detector test_port_scan_detector.cpp)
 netsight_add_test(traffic_analyzer test_traffic_analyzer.cpp)
 netsight_add_test(time test_time.cpp)
 netsight_add_test(csv_writer test_csv_writer.cpp)
+netsight_add_test(json_serializer test_json_serializer.cpp
+    LIBS nlohmann_json::nlohmann_json
+)
 
 set(CAPTURE_LIVE_EXTRA_LIBS netsight_capture)
 if(WIN32)
