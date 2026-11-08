@@ -21,29 +21,32 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 find_package(PCAP REQUIRED)
 
-
 include(FetchContent)
 set(gtest_force_shared_crt ON)
 FetchContent_Declare(googletest
-GIT_REPOSITORY https://github.com/google/googletest.git
-GIT_TAG v1.15.2
-GIT_SHALLOW TRUE
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.15.2
+    GIT_SHALLOW TRUE
 )
 
 set(JSON_BuildTests OFF)
+set(JSON_SystemInclude ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(nlohmann_json
-GIT_REPOSITORY https://github.com/nlohmann/json.git
-GIT_TAG v3.11.3
-GIT_SHALLOW TRUE
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
 )
 
 set(HTTPLIB_COMPILE OFF)
+set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(httplib
-GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-GIT_TAG v0.18.5
-GIT_SHALLOW TRUE                
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.18.5
+    GIT_SHALLOW TRUE                
 )
 
 FetchContent_MakeAvailable(googletest nlohmann_json httplib)
