@@ -121,6 +121,7 @@ struct RestServer::Impl {
         srv.set_pre_routing_handler([this](const httplib::Request& req, httplib::Response& res) {
             if (req.method != "GET") {
                 res.set_header("Allow", "GET");
+                res.set_header("Connection", "close");
                 respond_json(res, 405, serialize_error_json("method_not_allowed", "Only GET requests are supported"));
                 return httplib::Server::HandlerResponse::Handled;
             }

@@ -1,11 +1,16 @@
 #include "netsight/export/RestServer.hpp"
 
+#include "netsight/analytics/TrafficAnalyzer.hpp"
+#include "netsight/parser/ParsedPacket.hpp"
+
+#include <atomic>
 #include <chrono>
 #include <gtest/gtest.h>
 #include <httplib.h>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <thread>
 #include <vector>
 
 using json = nlohmann::json;
@@ -243,31 +248,46 @@ TEST(RestServerTest, NonGetMethodsReturn405WithAllowHeader) {
     std::string err;
     ASSERT_TRUE(server.start(err));
 
-    httplib::Client cli("127.0.0.1", server.bound_port());
-    cli.set_connection_timeout(std::chrono::seconds(2));
-    cli.set_read_timeout(std::chrono::seconds(2));
+    auto make_client = [&server]() {
+        httplib::Client cli("127.0.0.1", server.bound_port());
+        cli.set_connection_timeout(std::chrono::seconds(2));
+        cli.set_read_timeout(std::chrono::seconds(2));
+        return cli;
+    };
 
-    auto post_res = cli.Post("/api/v1/stats", "{}", "application/json");
-    ASSERT_TRUE(post_res);
-    EXPECT_EQ(post_res->status, 405);
-    EXPECT_EQ(post_res->get_header_value("Allow"), "GET");
-    auto j_post = json::parse(post_res->body);
-    EXPECT_EQ(j_post["error"]["code"], "method_not_allowed");
+    {
+        auto cli = make_client();
+        auto post_res = cli.Post("/api/v1/stats", "{}", "application/json");
+        ASSERT_TRUE(post_res);
+        EXPECT_EQ(post_res->status, 405);
+        EXPECT_EQ(post_res->get_header_value("Allow"), "GET");
+        auto j_post = json::parse(post_res->body);
+        EXPECT_EQ(j_post["error"]["code"], "method_not_allowed");
+    }
 
-    auto put_res = cli.Put("/api/v1/stats", "{}", "application/json");
-    ASSERT_TRUE(put_res);
-    EXPECT_EQ(put_res->status, 405);
-    EXPECT_EQ(put_res->get_header_value("Allow"), "GET");
+    {
+        auto cli = make_client();
+        auto put_res = cli.Put("/api/v1/stats", "{}", "application/json");
+        ASSERT_TRUE(put_res);
+        EXPECT_EQ(put_res->status, 405);
+        EXPECT_EQ(put_res->get_header_value("Allow"), "GET");
+    }
 
-    auto del_res = cli.Delete("/api/v1/stats");
-    ASSERT_TRUE(del_res);
-    EXPECT_EQ(del_res->status, 405);
-    EXPECT_EQ(del_res->get_header_value("Allow"), "GET");
+    {
+        auto cli = make_client();
+        auto del_res = cli.Delete("/api/v1/stats");
+        ASSERT_TRUE(del_res);
+        EXPECT_EQ(del_res->status, 405);
+        EXPECT_EQ(del_res->get_header_value("Allow"), "GET");
+    }
 
-    auto health_post = cli.Post("/api/v1/health", "{}", "application/json");
-    ASSERT_TRUE(health_post);
-    EXPECT_EQ(health_post->status, 405);
-    EXPECT_EQ(health_post->get_header_value("Allow"), "GET");
+    {
+        auto cli = make_client();
+        auto health_post = cli.Post("/api/v1/health", "{}", "application/json");
+        ASSERT_TRUE(health_post);
+        EXPECT_EQ(health_post->status, 405);
+        EXPECT_EQ(health_post->get_header_value("Allow"), "GET");
+    }
 
     server.stop();
 }
@@ -404,6 +424,93 @@ TEST(RestServerTest, NullSnapshotProviderFallsBackToEmptySnapshot) {
     EXPECT_EQ(res->status, 200);
     auto j = json::parse(res->body);
     EXPECT_EQ(j["totals"]["packets"], 0);
+
+    server.stop();
+}
+
+TEST(RestServerTest, ConcurrentAnalyzerPublishingAndHttpReads) {
+    TrafficAnalyzer analyzer;
+
+    RestConfig cfg;
+    cfg.host = "127.0.0.1";
+    cfg.port = 0;
+    cfg.worker_threads = 2;
+
+    RestServer server(cfg, [&analyzer]() {
+        return analyzer.latest_snapshot();
+    });
+
+    std::string err;
+    ASSERT_TRUE(server.start(err));
+    std::uint16_t port = server.bound_port();
+    ASSERT_GT(port, 0);
+
+    std::thread producer([&analyzer]() {
+        const std::uint8_t src_raw[4] = {192, 168, 1, 100};
+        const std::uint8_t dst_raw[4] = {10, 0, 0, 1};
+
+        for (std::uint64_t i = 1; i <= 100; ++i) {
+            ParsedPacket pkt{};
+            pkt.status = ParseStatus::Ok;
+            pkt.timestamp = Timestamp{1000000 + i * 10000};
+            pkt.network = NetworkProtocol::IPv4;
+            pkt.transport = TransportProtocol::TCP;
+            pkt.src_ip = IpAddress::from_ipv4(src_raw);
+            pkt.dst_ip = IpAddress::from_ipv4(dst_raw);
+            pkt.src_port = static_cast<std::uint16_t>(10000 + (i % 50));
+            pkt.dst_port = 80;
+            pkt.wire_length = 64;
+            pkt.captured_length = 64;
+            pkt.tcp_flags.value = 0x02;
+
+            analyzer.record(pkt);
+            analyzer.on_tick(pkt.timestamp);
+            std::this_thread::yield();
+        }
+    });
+
+    std::thread client1([port]() {
+        httplib::Client cli("127.0.0.1", port);
+        cli.set_connection_timeout(std::chrono::seconds(2));
+        cli.set_read_timeout(std::chrono::seconds(2));
+
+        std::uint64_t prev_seq = 0;
+        for (int i = 0; i < 50; ++i) {
+            auto res = cli.Get("/api/v1/stats");
+            ASSERT_TRUE(res);
+            EXPECT_EQ(res->status, 200);
+
+            auto j = json::parse(res->body);
+            std::uint64_t seq = j["snapshot_seq"].get<std::uint64_t>();
+            EXPECT_GE(seq, prev_seq);
+            prev_seq = seq;
+            std::this_thread::yield();
+        }
+    });
+
+    std::thread client2([port]() {
+        httplib::Client cli("127.0.0.1", port);
+        cli.set_connection_timeout(std::chrono::seconds(2));
+        cli.set_read_timeout(std::chrono::seconds(2));
+
+        std::uint64_t prev_seq = 0;
+        for (int i = 0; i < 50; ++i) {
+            auto res = cli.Get("/api/v1/alerts");
+            ASSERT_TRUE(res);
+            EXPECT_EQ(res->status, 200);
+
+            auto j = json::parse(res->body);
+            std::uint64_t seq = j["snapshot_seq"].get<std::uint64_t>();
+            EXPECT_GE(seq, prev_seq);
+            prev_seq = seq;
+            EXPECT_TRUE(j["alerts"].is_array());
+            std::this_thread::yield();
+        }
+    });
+
+    producer.join();
+    client1.join();
+    client2.join();
 
     server.stop();
 }
