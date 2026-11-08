@@ -10,13 +10,14 @@ namespace netsight::test {
 
 class TempFile {
 public:
-    explicit TempFile(const std::string& prefix = "netsight_test_") {
+    explicit TempFile(const std::string& prefix = "netsight_test_",
+                      const std::string& extension = ".pcap") {
         std::random_device rd;
         std::mt19937_64 gen(rd());
         std::uniform_int_distribution<std::uint64_t> dis;
 
         path_ = std::filesystem::temp_directory_path() / 
-                (prefix + std::to_string(dis(gen)) + ".pcap");
+                (prefix + std::to_string(dis(gen)) + extension);
     }
 
     ~TempFile() {
