@@ -64,3 +64,7 @@ netsight_add_test(capture_live test_capture_live.cpp
 netsight_add_test(cli test_cli.cpp
     LIBS netsight_app
 )
+
+netsight_add_test(signals test_signals.cpp
+    LIBS netsight_app
+)
