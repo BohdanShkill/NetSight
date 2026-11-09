@@ -301,3 +301,26 @@ TEST(JsonSerializerTest, ErrorJsonEscapesSpecialCharactersAndInvalidUtf8) {
     EXPECT_EQ(j["error"]["code"], "test_error");
     EXPECT_TRUE(j["error"]["message"].is_string());
 }
+
+TEST(JsonSerializerTest, SynTargetsSerializedCorrectly) {
+    StatsSnapshot snap{};
+    SynTargetEntry entry{};
+    const uint8_t ip_bytes[4] = {192, 168, 1, 100};
+    entry.dst_ip = IpAddress::from_ipv4(ip_bytes);
+    entry.dst_port = 8080;
+    entry.syn_count = 42;
+    entry.syn_ack_count = 3;
+    entry.syn_rate_pps = 42.0;
+    snap.syn_targets.push_back(entry);
+
+    std::string s = serialize_stats_json(snap);
+    auto j = json::parse(s);
+
+    ASSERT_TRUE(j.contains("syn_targets"));
+    ASSERT_EQ(j["syn_targets"].size(), 1u);
+    EXPECT_EQ(j["syn_targets"][0]["dst_ip"], "192.168.1.100");
+    EXPECT_EQ(j["syn_targets"][0]["dst_port"], 8080);
+    EXPECT_EQ(j["syn_targets"][0]["syn_count"], 42u);
+    EXPECT_EQ(j["syn_targets"][0]["syn_ack_count"], 3u);
+    EXPECT_DOUBLE_EQ(j["syn_targets"][0]["syn_rate_pps"], 42.0);
+}

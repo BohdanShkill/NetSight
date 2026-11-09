@@ -97,6 +97,17 @@ std::string serialize_stats_json(const StatsSnapshot& snap) {
         });
     }
 
+    json syn_targets_json = json::array();
+    for (const auto& t : snap.syn_targets) {
+        syn_targets_json.push_back({
+            {"dst_ip", ip_or_null(t.dst_ip)},
+            {"dst_port", t.dst_port},
+            {"syn_count", t.syn_count},
+            {"syn_ack_count", t.syn_ack_count},
+            {"syn_rate_pps", safe_double(t.syn_rate_pps)}
+        });
+    }
+
     json j = {
         {"snapshot_seq", snap.snapshot_seq},
         {"totals", {
@@ -132,6 +143,7 @@ std::string serialize_stats_json(const StatsSnapshot& snap) {
             {"none", {{"packets", snap.l4.none.packets}, {"bytes", snap.l4.none.bytes}}}
         }},
         {"top_ports", top_ports_json},
+        {"syn_targets", syn_targets_json},
         {"active_alerts", active_alerts_count}
     };
 

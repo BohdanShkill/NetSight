@@ -182,6 +182,54 @@ std::uint64_t SynFloodDetector::untracked_target_packets() const noexcept {
     return untracked_target_packets_;
 }
 
+std::vector<SynTargetEntry> SynFloodDetector::top_targets(std::size_t limit) const {
+    if (limit == 0 || targets_.empty()) {
+        return {};
+    }
+
+    std::vector<SynTargetEntry> result;
+    result.reserve(std::min(targets_.size(), limit));
+
+    for (const auto& [key, target] : targets_) {
+        if (max_seen_ts_ > target.last_seen &&
+            (max_seen_ts_ - target.last_seen) >= cfg_.window_duration) {
+            continue;
+        }
+
+        const auto syn_count = target.syn_window.total();
+        if (syn_count == 0) {
+            continue;
+        }
+
+        const auto syn_ack_count = target.syn_ack_window.total();
+        const double rate_pps = target.syn_window.rate_per_second();
+
+        result.push_back(SynTargetEntry{
+            key.ip,
+            key.port,
+            syn_count,
+            syn_ack_count,
+            rate_pps
+        });
+    }
+
+    std::sort(result.begin(), result.end(), [](const SynTargetEntry& a, const SynTargetEntry& b) noexcept {
+        if (a.syn_count != b.syn_count) {
+            return a.syn_count > b.syn_count;
+        }
+        if (a.dst_ip != b.dst_ip) {
+            return a.dst_ip < b.dst_ip;
+        }
+        return a.dst_port < b.dst_port;
+    });
+
+    if (result.size() > limit) {
+        result.resize(limit);
+    }
+
+    return result;
+}
+
 void SynFloodDetector::reset() {
     targets_.clear();
     log_.clear();

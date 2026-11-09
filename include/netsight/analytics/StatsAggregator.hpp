@@ -34,7 +34,8 @@ public:
     [[nodiscard]] StatsSnapshot build_snapshot(const DropCounters& external_drops = {}) const;
 
     std::shared_ptr<const StatsSnapshot> publish(const DropCounters& external_drops = {},
-                                                std::vector<Alert> alerts = {});
+                                                 std::vector<Alert> alerts = {},
+                                                 std::vector<SynTargetEntry> syn_targets = {});
 
     [[nodiscard]] std::shared_ptr<const StatsSnapshot> latest_snapshot() const noexcept;
 

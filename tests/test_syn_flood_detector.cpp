@@ -391,3 +391,36 @@ TEST(SynFloodDetectorTest, EvictedActiveAlertDoesNotWedgeTarget) {
     EXPECT_EQ(detector.alerts().front().state, AlertState::Active);
     EXPECT_EQ(detector.alerts().front().dst_ip, IpAddress::from_ipv4(std::array<uint8_t, 4>{192, 168, 1, 10}.data()));
 }
+
+TEST(SynFloodDetectorTest, TopTargetsReturnsSortedActiveCandidatesAndRespectsLimit) {
+    SynFloodDetector detector{};
+
+    for (int i = 0; i < 50; ++i) {
+        const auto raw = PacketBuilder{}.ethernet(0x0800)
+                                        .ipv4({10, 0, 0, 1}, {192, 168, 1, 10}, 6)
+                                        .tcp(static_cast<uint16_t>(10000 + i), 80, 0x02)
+                                        .build(Timestamp{100'000 + i * 1'000});
+        detector.record(parse_packet(raw, LinkType::Ethernet));
+    }
+
+    for (int i = 0; i < 20; ++i) {
+        const auto raw = PacketBuilder{}.ethernet(0x0800)
+                                        .ipv4({10, 0, 0, 2}, {192, 168, 1, 20}, 6)
+                                        .tcp(static_cast<uint16_t>(20000 + i), 443, 0x02)
+                                        .build(Timestamp{100'000 + i * 1'000});
+        detector.record(parse_packet(raw, LinkType::Ethernet));
+    }
+
+    const auto targets = detector.top_targets(10);
+    ASSERT_EQ(targets.size(), 2u);
+    EXPECT_EQ(targets[0].dst_ip, IpAddress::from_ipv4(std::array<uint8_t, 4>{192, 168, 1, 10}.data()));
+    EXPECT_EQ(targets[0].dst_port, 80);
+    EXPECT_EQ(targets[0].syn_count, 50u);
+    EXPECT_EQ(targets[1].dst_ip, IpAddress::from_ipv4(std::array<uint8_t, 4>{192, 168, 1, 20}.data()));
+    EXPECT_EQ(targets[1].dst_port, 443);
+    EXPECT_EQ(targets[1].syn_count, 20u);
+
+    const auto limited = detector.top_targets(1);
+    ASSERT_EQ(limited.size(), 1u);
+    EXPECT_EQ(limited[0].dst_port, 80);
+}
