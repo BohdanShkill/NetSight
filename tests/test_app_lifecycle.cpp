@@ -120,7 +120,7 @@ TEST(AppLifecycleTest, CaptureWithoutSourceInNonTtyFailsFast) {
 }
 
 TEST(AppLifecycleTest, InteractiveTtyInvalidSelectionReturnsUsageError) {
-    for (const std::string& bad_input : {"99\n", "abc\n"}) {
+    for (const char* bad_input : {"99\n", "abc\n"}) {
         std::istringstream in(bad_input);
         std::ostringstream out;
         std::ostringstream err;
@@ -130,7 +130,6 @@ TEST(AppLifecycleTest, InteractiveTtyInvalidSelectionReturnsUsageError) {
         env.list_interfaces_fn = [](std::string&) -> std::vector<NetworkInterface> {
             return {{"eth0", "Primary", "10.0.0.1", false, true}};
         };
-
         EXPECT_EQ(run_netsight({"capture"}, env), ExitCode::UsageError);
         EXPECT_NE(out.str().find("eth0"), std::string::npos);
         EXPECT_FALSE(err.str().empty());
