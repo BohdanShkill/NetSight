@@ -68,3 +68,13 @@ netsight_add_test(cli test_cli.cpp
 netsight_add_test(signals test_signals.cpp
     LIBS netsight_app
 )
+
+netsight_add_test(app_lifecycle test_app_lifecycle.cpp
+    LIBS netsight_app httplib::httplib nlohmann_json::nlohmann_json
+)
+
+target_compile_definitions(app_lifecycle PRIVATE
+    NETSIGHT_EXE_PATH="$<TARGET_FILE:netsight>"
+)
+
+add_dependencies(app_lifecycle netsight)

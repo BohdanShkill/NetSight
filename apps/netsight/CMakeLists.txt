@@ -1,6 +1,7 @@
 add_library(netsight_app STATIC
     Cli.cpp
     Signals.cpp
+    App.cpp
 )
 
 target_include_directories(netsight_app PUBLIC
