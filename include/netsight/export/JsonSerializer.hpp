@@ -1,5 +1,6 @@
 #pragma once
 
+#include "netsight/analytics/DistributedAggregator.hpp"
 #include "netsight/analytics/StatsSnapshot.hpp"
 
 #include <cstddef>
@@ -45,5 +46,13 @@ enum class AlertFilterState : std::uint8_t {
 [[nodiscard]] std::string serialize_error_json(
     std::string_view code,
     std::string_view message);
+
+[[nodiscard]] bool parse_agent_stats_json(
+    std::string_view json_str,
+    AgentMetricsReport& out) noexcept;
+
+[[nodiscard]] bool parse_agent_top_talkers_json(
+    std::string_view json_str,
+    AgentMetricsReport& out) noexcept;
 
 }

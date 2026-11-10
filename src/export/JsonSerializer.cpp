@@ -266,4 +266,110 @@ std::string serialize_error_json(std::string_view code, std::string_view message
     return dump_json(j);
 }
 
+bool parse_agent_stats_json(std::string_view json_str, AgentMetricsReport& out) noexcept {
+    try {
+        auto j = json::parse(json_str, nullptr, false);
+        if (j.is_discarded() || !j.is_object()) {
+            return false;
+        }
+
+        if (j.contains("totals") && j["totals"].is_object()) {
+            const auto& totals = j["totals"];
+            out.total_packets = totals.value("packets", std::uint64_t{0});
+            out.total_wire_bytes = totals.value("wire_bytes", std::uint64_t{0});
+            out.pps = totals.value("packets_per_second", 0.0);
+            out.bps = totals.value("bytes_per_second", 0.0);
+        }
+
+        if (j.contains("l4") && j["l4"].is_object()) {
+            const auto& l4 = j["l4"];
+            if (l4.contains("tcp") && l4["tcp"].is_object()) {
+                out.tcp_packets = l4["tcp"].value("packets", std::uint64_t{0});
+            }
+            if (l4.contains("udp") && l4["udp"].is_object()) {
+                out.udp_packets = l4["udp"].value("packets", std::uint64_t{0});
+            }
+            if (l4.contains("icmp") && l4["icmp"].is_object()) {
+                out.icmp_packets = l4["icmp"].value("packets", std::uint64_t{0});
+            }
+            if (l4.contains("other") && l4["other"].is_object()) {
+                out.other_packets = l4["other"].value("packets", std::uint64_t{0});
+            }
+        }
+
+        if (j.contains("top_ports") && j["top_ports"].is_array()) {
+            out.top_ports.clear();
+            for (const auto& item : j["top_ports"]) {
+                if (item.is_object()) {
+                    PortEntry p{};
+                    p.port = item.value("port", std::uint16_t{0});
+                    p.packets = item.value("packets", std::uint64_t{0});
+                    p.bytes = item.value("bytes", std::uint64_t{0});
+                    out.top_ports.push_back(p);
+                }
+            }
+        }
+
+        if (j.contains("syn_targets") && j["syn_targets"].is_array()) {
+            out.syn_targets.clear();
+            for (const auto& item : j["syn_targets"]) {
+                if (item.is_object()) {
+                    SynTargetEntry t{};
+                    const auto ip_str = item.value("dst_ip", std::string{});
+                    if (auto parsed_ip = parse_ip_address(ip_str)) {
+                        t.dst_ip = *parsed_ip;
+                    }
+                    t.dst_port = item.value("dst_port", std::uint16_t{0});
+                    t.syn_count = item.value("syn_count", std::uint64_t{0});
+                    t.syn_ack_count = item.value("syn_ack_count", std::uint64_t{0});
+                    t.syn_rate_pps = item.value("syn_rate_pps", 0.0);
+                    out.syn_targets.push_back(t);
+                }
+            }
+        }
+
+        if (j.contains("active_alerts") && j["active_alerts"].is_number()) {
+            out.active_alerts_count = j.value("active_alerts", std::size_t{0});
+        }
+
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool parse_agent_top_talkers_json(std::string_view json_str, AgentMetricsReport& out) noexcept {
+    try {
+        auto j = json::parse(json_str, nullptr, false);
+        if (j.is_discarded() || !j.is_object()) {
+            return false;
+        }
+
+        const auto* arr_ptr = j.contains("talkers") && j["talkers"].is_array() ? &j["talkers"] : nullptr;
+        if (!arr_ptr && j.contains("top_talkers") && j["top_talkers"].is_array()) {
+            arr_ptr = &j["top_talkers"];
+        }
+
+        if (arr_ptr) {
+            out.top_talkers.clear();
+            for (const auto& item : *arr_ptr) {
+                if (item.is_object()) {
+                    TalkerEntry t{};
+                    const auto ip_str = item.value("ip", std::string{});
+                    if (auto parsed_ip = parse_ip_address(ip_str)) {
+                        t.ip = *parsed_ip;
+                    }
+                    t.packets = item.value("packets", std::uint64_t{0});
+                    t.bytes = item.value("bytes", std::uint64_t{0});
+                    out.top_talkers.push_back(t);
+                }
+            }
+        }
+
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 }

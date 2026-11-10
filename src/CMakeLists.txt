@@ -5,6 +5,7 @@ add_library(netsight_core STATIC
     export/CsvWriter.cpp
     export/JsonSerializer.cpp
     export/RestServer.cpp
+    export/AgentPoller.cpp
     parser/PacketParser.cpp
     source/ThreadedPacketSource.cpp
     source/PcapFileReader.cpp
