@@ -243,3 +243,54 @@ TEST(CliTest, FullValidLiveAndOfflineFlagCombinations) {
         EXPECT_FALSE(res.capture.quiet);
     }
 }
+
+TEST(CliTest, AggregateSubcommandRequiresAtLeastOneAgentAndValidatesFormat) {
+    for (const auto& args : std::vector<std::vector<std::string>>{
+             {"aggregate"},
+             {"aggregate", "--agent", "invalid_no_port"},
+             {"aggregate", "--agent", "127.0.0.1:0"},
+             {"aggregate", "--agent", "127.0.0.1:70000"},
+             {"aggregate", "--agent", ":8080"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--interval", "0"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--interval", "-1.0"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--min-agents", "0"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--syn-threshold", "0"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--pps-threshold", "-10"}}) {
+        std::ostringstream out;
+        std::ostringstream err;
+        auto res = parse_cli(args, out, err);
+        EXPECT_EQ(res.exit_code, ExitCode::UsageError);
+        EXPECT_FALSE(err.str().empty());
+    }
+}
+
+TEST(CliTest, FullValidAggregateSubcommandFlags) {
+    std::ostringstream out;
+    std::ostringstream err;
+    auto res = parse_cli({"aggregate",
+                          "--agent", "127.0.0.1:18081",
+                          "--agent", "http://127.0.0.1:18082",
+                          "--api-token", "secret123",
+                          "--interval", "0.5",
+                          "--rounds", "3",
+                          "--min-agents", "3",
+                          "--syn-threshold", "150.0",
+                          "--pps-threshold", "800.0",
+                          "--csv", "global_metrics.csv",
+                          "-q"},
+                         out, err);
+    EXPECT_EQ(res.exit_code, ExitCode::Ok);
+    EXPECT_EQ(res.command, CommandKind::Aggregate);
+    ASSERT_EQ(res.aggregate.agents.size(), 2U);
+    EXPECT_EQ(res.aggregate.agents[0], "127.0.0.1:18081");
+    EXPECT_EQ(res.aggregate.agents[1], "http://127.0.0.1:18082");
+    EXPECT_EQ(res.aggregate.api_token, "secret123");
+    EXPECT_DOUBLE_EQ(res.aggregate.interval_seconds, 0.5);
+    EXPECT_EQ(res.aggregate.rounds, 3ULL);
+    EXPECT_EQ(res.aggregate.min_agents, 3U);
+    EXPECT_DOUBLE_EQ(res.aggregate.syn_threshold, 150.0);
+    EXPECT_DOUBLE_EQ(res.aggregate.pps_threshold, 800.0);
+    ASSERT_TRUE(res.aggregate.csv_file.has_value());
+    EXPECT_EQ(*res.aggregate.csv_file, "global_metrics.csv");
+    EXPECT_TRUE(res.aggregate.quiet);
+}

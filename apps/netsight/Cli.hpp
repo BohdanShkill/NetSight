@@ -20,7 +20,8 @@ enum class ExitCode : int {
 enum class CommandKind : std::uint8_t {
     None,
     List,
-    Capture
+    Capture,
+    Aggregate
 };
 
 struct CaptureCliOptions {
@@ -42,10 +43,23 @@ struct CaptureCliOptions {
     bool quiet{false};
 };
 
+struct AggregateCliOptions {
+    std::vector<std::string> agents{};
+    std::string api_token{};
+    double interval_seconds{1.0};
+    std::uint64_t rounds{0};
+    std::size_t min_agents{2};
+    double syn_threshold{100.0};
+    double pps_threshold{500.0};
+    std::optional<std::string> csv_file{};
+    bool quiet{false};
+};
+
 struct CliParseResult {
     ExitCode exit_code{ExitCode::Ok};
     CommandKind command{CommandKind::None};
     CaptureCliOptions capture{};
+    AggregateCliOptions aggregate{};
 };
 
 CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, std::ostream& err);

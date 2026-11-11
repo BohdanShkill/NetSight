@@ -7,6 +7,8 @@
 #include "support/PcapWriter.hpp"
 #include "support/TempFile.hpp"
 
+#include "netsight/export/RestServer.hpp"
+
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
@@ -19,6 +21,7 @@
 #include <fstream>
 #include <future>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -430,4 +433,137 @@ TEST(AppLifecycleTest, ExecutableBinarySmokeTest) {
 
     EXPECT_EQ(std::system(cmd_ver.c_str()), 0);
     EXPECT_EQ(std::system(cmd_cap.c_str()), 0);
+}
+
+TEST(AppLifecycleTest, AggregateDetectsSubThresholdDistributedSynFloodEndToEnd) {
+    TempFile csv_out("netsight_agg_e2e_", ".csv");
+
+    auto make_agent_snap = []() {
+        auto snap = std::make_shared<StatsSnapshot>();
+        snap->total_packets = 200;
+        snap->total_wire_bytes = 20000;
+        snap->packets_per_second = 50.0;
+        snap->bytes_per_second = 5000.0;
+        snap->l4.tcp.packets = 200;
+        snap->syn_targets.push_back(SynTargetEntry{
+            *parse_ip_address("10.0.0.50"),
+            443,
+            45,
+            2,
+            45.0
+        });
+        return snap;
+    };
+
+    auto snap1 = make_agent_snap();
+    auto snap2 = make_agent_snap();
+    auto snap3 = make_agent_snap();
+
+    RestConfig rcfg{};
+    rcfg.host = "127.0.0.1";
+    rcfg.port = 0;
+
+    RestServer srv1(rcfg, [snap1]() { return snap1; });
+    RestServer srv2(rcfg, [snap2]() { return snap2; });
+    RestServer srv3(rcfg, [snap3]() { return snap3; });
+
+    std::string err1, err2, err3;
+    ASSERT_TRUE(srv1.start(err1));
+    ASSERT_TRUE(srv2.start(err2));
+    ASSERT_TRUE(srv3.start(err3));
+
+    const std::string ep1 = "127.0.0.1:" + std::to_string(srv1.bound_port());
+    const std::string ep2 = "127.0.0.1:" + std::to_string(srv2.bound_port());
+    const std::string ep3 = "127.0.0.1:" + std::to_string(srv3.bound_port());
+
+    std::istringstream in;
+    std::ostringstream out;
+    std::ostringstream err;
+    AppEnv env{in, out, err};
+
+    const auto rc = run_netsight({
+        "aggregate",
+        "--agent", ep1,
+        "--agent", ep2,
+        "--agent", ep3,
+        "--min-agents", "3",
+        "--syn-threshold", "100.0",
+        "--rounds", "1",
+        "--interval", "0.2",
+        "--csv", csv_out.string()
+    }, env);
+
+    srv1.stop();
+    srv2.stop();
+    srv3.stop();
+
+    EXPECT_EQ(rc, ExitCode::Ok);
+    EXPECT_TRUE(err.str().empty());
+    EXPECT_NE(out.str().find("Online agents: 3/3"), std::string::npos);
+    EXPECT_NE(out.str().find("[ALERT] DistributedSynFlood"), std::string::npos);
+    EXPECT_NE(out.str().find("10.0.0.50:443"), std::string::npos);
+
+    const std::string csv_content = read_binary_file(csv_out.path());
+    EXPECT_NE(csv_content.find("1,3,3,600,60000,"), std::string::npos);
+}
+
+TEST(AppLifecycleTest, AggregateToleratesPartialAgentOutageAndFailsWhenAllOffline) {
+    auto snap = std::make_shared<StatsSnapshot>();
+    snap->total_packets = 100;
+    snap->total_wire_bytes = 10000;
+    snap->packets_per_second = 25.0;
+
+    RestConfig rcfg{};
+    rcfg.host = "127.0.0.1";
+    rcfg.port = 0;
+
+    RestServer srv1(rcfg, [snap]() { return snap; });
+    RestServer srv2(rcfg, [snap]() { return snap; });
+
+    std::string start_err;
+    ASSERT_TRUE(srv1.start(start_err));
+    ASSERT_TRUE(srv2.start(start_err));
+
+    const std::string ep1 = "127.0.0.1:" + std::to_string(srv1.bound_port());
+    const std::string ep2 = "127.0.0.1:" + std::to_string(srv2.bound_port());
+
+    {
+        std::istringstream in;
+        std::ostringstream out;
+        std::ostringstream err;
+        AppEnv env{in, out, err};
+
+        const auto rc = run_netsight({
+            "aggregate",
+            "--agent", ep1,
+            "--agent", ep2,
+            "--agent", "127.0.0.1:1",
+            "--rounds", "1",
+            "--interval", "0.2"
+        }, env);
+
+        EXPECT_EQ(rc, ExitCode::Ok);
+        EXPECT_TRUE(err.str().empty());
+        EXPECT_NE(out.str().find("Online agents: 2/3"), std::string::npos);
+    }
+
+    srv1.stop();
+    srv2.stop();
+
+    {
+        std::istringstream in;
+        std::ostringstream out;
+        std::ostringstream err;
+        AppEnv env{in, out, err};
+
+        const auto rc = run_netsight({
+            "aggregate",
+            "--agent", "127.0.0.1:1",
+            "--rounds", "1",
+            "--interval", "0.2"
+        }, env);
+
+        EXPECT_EQ(rc, ExitCode::RuntimeError);
+        EXPECT_FALSE(err.str().empty());
+    }
 }

@@ -2,15 +2,47 @@
 
 #include <CLI/CLI.hpp>
 
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <ostream>
+#include <string_view>
 
 #ifndef NETSIGHT_VERSION
 #define NETSIGHT_VERSION "0.1.0"
 #endif
 
 namespace netsight {
+
+namespace {
+
+bool is_valid_agent_endpoint(std::string_view ep) {
+    if (ep.empty()) {
+        return false;
+    }
+    if (ep.rfind("http://", 0) == 0) {
+        ep.remove_prefix(7);
+    } else if (ep.rfind("https://", 0) == 0) {
+        ep.remove_prefix(8);
+    }
+    const auto colon_pos = ep.rfind(':');
+    if (colon_pos == std::string_view::npos) {
+        return false;
+    }
+    const auto host = ep.substr(0, colon_pos);
+    const auto port_str = ep.substr(colon_pos + 1);
+    if (host.empty() || port_str.empty()) {
+        return false;
+    }
+    int p = 0;
+    auto [ptr, ec] = std::from_chars(port_str.data(), port_str.data() + port_str.size(), p);
+    if (ec != std::errc{} || ptr != port_str.data() + port_str.size() || p <= 0 || p > 65535) {
+        return false;
+    }
+    return true;
+}
+
+}
 
 CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, std::ostream& err) {
     CLI::App app{"NetSight - Network traffic analyzer and anomaly detector", "netsight"};
@@ -79,6 +111,38 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
     bool quiet_val = false;
     cap_cmd->add_flag("-q,--quiet", quiet_val, "Suppress non-essential console output");
 
+    auto* agg_cmd = app.add_subcommand("aggregate", "Aggregate metrics from multiple NetSight agents for distributed DDoS detection");
+
+    std::vector<std::string> agg_agents_val;
+    auto* opt_agg_agents = agg_cmd->add_option("-a,--agent", agg_agents_val, "Agent endpoint in host:port format (can specify multiple)")
+                                   ->expected(1, -1);
+
+    std::string agg_token_val;
+    agg_cmd->add_option("--api-token", agg_token_val, "Bearer token for authenticating with agents");
+
+    double agg_interval_val = 1.0;
+    auto* opt_agg_interval = agg_cmd->add_option("--interval", agg_interval_val, "Interval in seconds between polling rounds (> 0.0)");
+
+    std::int64_t agg_rounds_val = 0;
+    agg_cmd->add_option("--rounds", agg_rounds_val, "Number of polling rounds (0 = run indefinitely)")
+           ->check(CLI::Range(std::int64_t{0}, std::numeric_limits<std::int64_t>::max()));
+
+    std::int64_t agg_min_agents_val = 2;
+    agg_cmd->add_option("--min-agents", agg_min_agents_val, "Minimum witness agents to correlate a distributed attack (>= 1)")
+           ->check(CLI::Range(std::int64_t{1}, std::numeric_limits<std::int64_t>::max()));
+
+    double agg_syn_thresh_val = 100.0;
+    auto* opt_agg_syn = agg_cmd->add_option("--syn-threshold", agg_syn_thresh_val, "Global threshold for distributed SYN flood in SYN/s (> 0.0)");
+
+    double agg_pps_thresh_val = 500.0;
+    auto* opt_agg_pps = agg_cmd->add_option("--pps-threshold", agg_pps_thresh_val, "Global volumetric threshold in packets/s (> 0.0)");
+
+    std::string agg_csv_val;
+    auto* opt_agg_csv = agg_cmd->add_option("--csv", agg_csv_val, "Path to output CSV file for recording global metrics per round");
+
+    bool agg_quiet_val = false;
+    agg_cmd->add_flag("-q,--quiet", agg_quiet_val, "Suppress periodic console output");
+
     try {
         app.parse(argc, argv);
     } catch (const CLI::ParseError& e) {
@@ -86,11 +150,11 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
         if (rc != 0 && opt_bpf->count() > 0 && opt_file->count() > 0) {
             err << "Hint: --bpf is only supported for live capture (-i). For offline pcap (-r), use --filter-ip or --filter-port.\n";
         }
-        return {rc == 0 ? ExitCode::Ok : ExitCode::UsageError, CommandKind::None, {}};
+        return {rc == 0 ? ExitCode::Ok : ExitCode::UsageError, CommandKind::None, {}, {}};
     }
 
     if (list_cmd->parsed()) {
-        return {ExitCode::Ok, CommandKind::List, {}};
+        return {ExitCode::Ok, CommandKind::List, {}, {}};
     }
 
     if (cap_cmd->parsed()) {
@@ -116,7 +180,7 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
             auto parsed_ip = parse_ip_address(filter_ip_raw_val);
             if (!parsed_ip.has_value()) {
                 err << "Error: invalid IP address for --filter-ip: " << filter_ip_raw_val << '\n';
-                return {ExitCode::UsageError, CommandKind::None, {}};
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
             }
             opts.filter_ip = parsed_ip;
             opts.filter_ip_raw = filter_ip_raw_val;
@@ -129,7 +193,7 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
         if (opt_dur->count() > 0) {
             if (!std::isfinite(duration_val) || duration_val <= 0.0) {
                 err << "Error: --duration must be a finite positive number\n";
-                return {ExitCode::UsageError, CommandKind::None, {}};
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
             }
             opts.duration_seconds = duration_val;
         }
@@ -143,7 +207,7 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
         if (opt_csv->count() > 0) {
             if (csv_prefix_val.empty()) {
                 err << "Error: --csv prefix cannot be empty\n";
-                return {ExitCode::UsageError, CommandKind::None, {}};
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
             }
             opts.csv_prefix = csv_prefix_val;
         }
@@ -152,7 +216,7 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
             opts.api_port = static_cast<std::uint16_t>(api_port_val);
             if (api_host_val.empty()) {
                 err << "Error: --api-host cannot be empty\n";
-                return {ExitCode::UsageError, CommandKind::None, {}};
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
             }
             opts.api_host = api_host_val;
             opts.api_token = api_token_val;
@@ -160,10 +224,67 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
 
         opts.quiet = quiet_val;
 
-        return {ExitCode::Ok, CommandKind::Capture, opts};
+        return {ExitCode::Ok, CommandKind::Capture, opts, {}};
     }
 
-    return {ExitCode::UsageError, CommandKind::None, {}};
+    if (agg_cmd->parsed()) {
+        if (opt_agg_agents->count() == 0 || agg_agents_val.empty()) {
+            err << "Error: at least one --agent must be specified\n";
+            return {ExitCode::UsageError, CommandKind::None, {}, {}};
+        }
+
+        for (const auto& agent : agg_agents_val) {
+            if (!is_valid_agent_endpoint(agent)) {
+                err << "Error: invalid agent endpoint format: " << agent << '\n';
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
+            }
+        }
+
+        if (opt_agg_interval->count() > 0) {
+            if (!std::isfinite(agg_interval_val) || agg_interval_val <= 0.0) {
+                err << "Error: --interval must be a finite positive number\n";
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
+            }
+        }
+
+        if (opt_agg_syn->count() > 0) {
+            if (!std::isfinite(agg_syn_thresh_val) || agg_syn_thresh_val <= 0.0) {
+                err << "Error: --syn-threshold must be a finite positive number\n";
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
+            }
+        }
+
+        if (opt_agg_pps->count() > 0) {
+            if (!std::isfinite(agg_pps_thresh_val) || agg_pps_thresh_val <= 0.0) {
+                err << "Error: --pps-threshold must be a finite positive number\n";
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
+            }
+        }
+
+        if (opt_agg_csv->count() > 0) {
+            if (agg_csv_val.empty()) {
+                err << "Error: --csv file path cannot be empty\n";
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
+            }
+        }
+
+        AggregateCliOptions opts;
+        opts.agents = std::move(agg_agents_val);
+        opts.api_token = agg_token_val;
+        opts.interval_seconds = agg_interval_val;
+        opts.rounds = static_cast<std::uint64_t>(agg_rounds_val);
+        opts.min_agents = static_cast<std::size_t>(agg_min_agents_val);
+        opts.syn_threshold = agg_syn_thresh_val;
+        opts.pps_threshold = agg_pps_thresh_val;
+        if (opt_agg_csv->count() > 0) {
+            opts.csv_file = agg_csv_val;
+        }
+        opts.quiet = agg_quiet_val;
+
+        return {ExitCode::Ok, CommandKind::Aggregate, {}, opts};
+    }
+
+    return {ExitCode::UsageError, CommandKind::None, {}, {}};
 }
 
 CliParseResult parse_cli(const std::vector<std::string>& args, std::ostream& out, std::ostream& err) {
