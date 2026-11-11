@@ -47,6 +47,7 @@ struct AggregateCliOptions {
     std::vector<std::string> agents{};
     std::string api_token{};
     double interval_seconds{1.0};
+    std::uint32_t timeout_ms{1000};
     std::uint64_t rounds{0};
     std::size_t min_agents{2};
     double syn_threshold{100.0};

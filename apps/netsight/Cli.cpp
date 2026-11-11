@@ -123,6 +123,10 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
     double agg_interval_val = 1.0;
     auto* opt_agg_interval = agg_cmd->add_option("--interval", agg_interval_val, "Interval in seconds between polling rounds (> 0.0)");
 
+    std::uint32_t agg_timeout_ms_val = 1000;
+    agg_cmd->add_option("--timeout-ms", agg_timeout_ms_val, "Timeout in milliseconds for agent HTTP polling (50..60000)")
+           ->check(CLI::Range(std::uint32_t{50}, std::uint32_t{60000}));
+
     std::int64_t agg_rounds_val = 0;
     agg_cmd->add_option("--rounds", agg_rounds_val, "Number of polling rounds (0 = run indefinitely)")
            ->check(CLI::Range(std::int64_t{0}, std::numeric_limits<std::int64_t>::max()));
@@ -272,6 +276,7 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
         opts.agents = std::move(agg_agents_val);
         opts.api_token = agg_token_val;
         opts.interval_seconds = agg_interval_val;
+        opts.timeout_ms = agg_timeout_ms_val;
         opts.rounds = static_cast<std::uint64_t>(agg_rounds_val);
         opts.min_agents = static_cast<std::size_t>(agg_min_agents_val);
         opts.syn_threshold = agg_syn_thresh_val;

@@ -255,7 +255,10 @@ TEST(CliTest, AggregateSubcommandRequiresAtLeastOneAgentAndValidatesFormat) {
              {"aggregate", "--agent", "127.0.0.1:18081", "--interval", "-1.0"},
              {"aggregate", "--agent", "127.0.0.1:18081", "--min-agents", "0"},
              {"aggregate", "--agent", "127.0.0.1:18081", "--syn-threshold", "0"},
-             {"aggregate", "--agent", "127.0.0.1:18081", "--pps-threshold", "-10"}}) {
+             {"aggregate", "--agent", "127.0.0.1:18081", "--pps-threshold", "-10"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--timeout-ms", "0"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--timeout-ms", "10"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--timeout-ms", "70000"}}) {
         std::ostringstream out;
         std::ostringstream err;
         auto res = parse_cli(args, out, err);
@@ -272,6 +275,7 @@ TEST(CliTest, FullValidAggregateSubcommandFlags) {
                           "--agent", "http://127.0.0.1:18082",
                           "--api-token", "secret123",
                           "--interval", "0.5",
+                          "--timeout-ms", "500",
                           "--rounds", "3",
                           "--min-agents", "3",
                           "--syn-threshold", "150.0",
@@ -286,6 +290,7 @@ TEST(CliTest, FullValidAggregateSubcommandFlags) {
     EXPECT_EQ(res.aggregate.agents[1], "http://127.0.0.1:18082");
     EXPECT_EQ(res.aggregate.api_token, "secret123");
     EXPECT_DOUBLE_EQ(res.aggregate.interval_seconds, 0.5);
+    EXPECT_EQ(res.aggregate.timeout_ms, 500U);
     EXPECT_EQ(res.aggregate.rounds, 3ULL);
     EXPECT_EQ(res.aggregate.min_agents, 3U);
     EXPECT_DOUBLE_EQ(res.aggregate.syn_threshold, 150.0);
@@ -293,4 +298,12 @@ TEST(CliTest, FullValidAggregateSubcommandFlags) {
     ASSERT_TRUE(res.aggregate.csv_file.has_value());
     EXPECT_EQ(*res.aggregate.csv_file, "global_metrics.csv");
     EXPECT_TRUE(res.aggregate.quiet);
+}
+
+TEST(CliTest, AggregateDefaultTimeoutMsIs1000) {
+    std::ostringstream out;
+    std::ostringstream err;
+    auto res = parse_cli({"aggregate", "--agent", "127.0.0.1:18081"}, out, err);
+    EXPECT_EQ(res.exit_code, ExitCode::Ok);
+    EXPECT_EQ(res.aggregate.timeout_ms, 1000U);
 }

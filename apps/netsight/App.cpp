@@ -586,10 +586,21 @@ ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
     IntervalTracker tracker{opts.agents.size()};
 
     AgentPollerConfig poller_cfg{};
-    poller_cfg.timeout_ms = static_cast<std::uint32_t>(std::clamp(opts.interval_seconds * 1000.0, 100.0, 5000.0));
+    poller_cfg.timeout_ms = opts.timeout_ms;
     poller_cfg.api_token = opts.api_token;
 
     AgentPoller poller{poller_cfg};
+
+    const std::size_t k = opts.agents.size();
+    const std::size_t c = poller.config().max_parallel == 0 ? 1 : poller.config().max_parallel;
+    const std::uint64_t waves = (k == 0) ? 0 : ((k + c - 1) / c);
+    const std::uint64_t worst_ms = waves * 2ULL * static_cast<std::uint64_t>(opts.timeout_ms);
+    const double interval_ms = opts.interval_seconds * 1000.0;
+
+    if (static_cast<double>(worst_ms) > interval_ms) {
+        env.err << "Warning: worst-case round duration (" << worst_ms << " ms) exceeds poll interval ("
+                << static_cast<std::uint64_t>(interval_ms) << " ms)\n";
+    }
 
     std::ofstream csv_file;
     if (opts.csv_file.has_value()) {
