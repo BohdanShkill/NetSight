@@ -133,7 +133,8 @@ struct RestServer::Impl {
                     return httplib::Server::HandlerResponse::Handled;
                 }
 
-                auto token = extract_bearer_token(req.get_header_value("Authorization"));
+                const auto auth_header = req.get_header_value("Authorization");
+                auto token = extract_bearer_token(auth_header);
                 if (!token.has_value() || !constant_time_equals(*token, cfg_.bearer_token)) {
                     res.set_header("WWW-Authenticate", "Bearer");
                     respond_json(res, 401, serialize_error_json("unauthorized", "Missing or invalid Bearer token"));

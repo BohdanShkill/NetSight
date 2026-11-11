@@ -5,6 +5,7 @@ add_library(netsight_core STATIC
     export/CsvWriter.cpp
     export/JsonSerializer.cpp
     export/RestServer.cpp
+    export/AgentPoller.cpp
     parser/PacketParser.cpp
     source/ThreadedPacketSource.cpp
     source/PcapFileReader.cpp
@@ -14,6 +15,7 @@ add_library(netsight_core STATIC
     analytics/SynFloodDetector.cpp
     analytics/PortScanDetector.cpp
     analytics/TrafficAnalyzer.cpp
+    analytics/DistributedAggregator.cpp
 )
 
 target_include_directories(netsight_core PUBLIC 

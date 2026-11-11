@@ -2,6 +2,7 @@
 
 #include "netsight/analytics/Alert.hpp"
 #include "netsight/analytics/SlidingWindow.hpp"
+#include "netsight/analytics/StatsSnapshot.hpp"
 #include "netsight/core/IpAddress.hpp"
 #include "netsight/core/Types.hpp"
 #include "netsight/parser/ParsedPacket.hpp"
@@ -64,6 +65,7 @@ public:
     [[nodiscard]] std::vector<Alert> active_alerts() const;
     [[nodiscard]] std::size_t tracked_target_count() const noexcept;
     [[nodiscard]] std::uint64_t untracked_target_packets() const noexcept;
+    [[nodiscard]] std::vector<SynTargetEntry> top_targets(std::size_t limit = 16) const;
     void reset();
 
 private:

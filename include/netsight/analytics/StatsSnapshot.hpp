@@ -118,6 +118,26 @@ struct PortEntry {
     }
 };
 
+struct SynTargetEntry {
+    IpAddress dst_ip{};
+    std::uint16_t dst_port{0};
+    std::uint64_t syn_count{0};
+    std::uint64_t syn_ack_count{0};
+    double syn_rate_pps{0.0};
+
+    bool operator==(const SynTargetEntry& rhs) const noexcept {
+        return dst_ip == rhs.dst_ip &&
+               dst_port == rhs.dst_port &&
+               syn_count == rhs.syn_count &&
+               syn_ack_count == rhs.syn_ack_count &&
+               syn_rate_pps == rhs.syn_rate_pps;
+    }
+
+    bool operator!=(const SynTargetEntry& rhs) const noexcept {
+        return !(*this == rhs);
+    }
+};
+
 struct DropCounters {
     std::uint64_t filtered_out{0};
     std::uint64_t queue_dropped{0};
@@ -161,6 +181,7 @@ struct StatsSnapshot {
     std::vector<TalkerEntry> top_talkers{};
     std::vector<PortEntry> top_ports{};
     std::vector<Alert> alerts{};
+    std::vector<SynTargetEntry> syn_targets{};
 };
 
 }

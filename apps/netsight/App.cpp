@@ -1,13 +1,16 @@
 #include "App.hpp"
 
+#include "netsight/analytics/DistributedAggregator.hpp"
 #include "netsight/analytics/TrafficAnalyzer.hpp"
 #include "netsight/capture/PcapLiveSource.hpp"
 #include "netsight/core/Time.hpp"
+#include "netsight/export/AgentPoller.hpp"
 #include "netsight/export/CsvWriter.hpp"
 #include "netsight/export/RestServer.hpp"
 #include "netsight/pipeline/CaptureSession.hpp"
 #include "netsight/source/PcapFileReader.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -22,6 +25,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -571,6 +575,126 @@ ExitCode run_capture(const CaptureCliOptions& opts, AppEnv& env) {
     return ExitCode::Ok;
 }
 
+ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
+    DistributedAggregatorConfig agg_cfg{};
+    agg_cfg.min_agents = opts.min_agents;
+    agg_cfg.global_syn_pps_threshold = opts.syn_threshold;
+    agg_cfg.global_volumetric_pps_threshold = opts.pps_threshold;
+
+    DistributedAggregator aggregator{agg_cfg};
+
+    AgentPollerConfig poller_cfg{};
+    poller_cfg.timeout_ms = static_cast<std::uint32_t>(std::clamp(opts.interval_seconds * 1000.0, 100.0, 5000.0));
+    poller_cfg.api_token = opts.api_token;
+
+    AgentPoller poller{poller_cfg};
+
+    std::ofstream csv_file;
+    if (opts.csv_file.has_value()) {
+        csv_file.open(*opts.csv_file, std::ios::out | std::ios::trunc);
+        if (!csv_file.is_open()) {
+            env.err << "Error: failed to open CSV output file: " << *opts.csv_file << '\n';
+            return ExitCode::RuntimeError;
+        }
+        csv_file << "round,online_agents,total_agents,total_packets,total_wire_bytes,global_pps,global_bps,tcp_packets,udp_packets,icmp_packets,other_packets,active_alerts\n";
+        csv_file.flush();
+    }
+
+    if (!opts.quiet) {
+        env.out << "Starting distributed metric aggregation (" << opts.agents.size() << " agents configured)\n";
+    }
+
+    std::uint64_t current_round = 0;
+    std::uint64_t total_online_across_rounds = 0;
+    GlobalNetworkSnapshot last_snapshot{};
+
+    while (!env.stop_requested_fn || !env.stop_requested_fn()) {
+        if (opts.rounds > 0 && current_round >= opts.rounds) {
+            break;
+        }
+
+        ++current_round;
+        auto reports = poller.poll_all(opts.agents);
+        last_snapshot = aggregator.aggregate(reports);
+        total_online_across_rounds += last_snapshot.online_agents;
+
+        if (csv_file.is_open()) {
+            csv_file << current_round << ','
+                     << last_snapshot.online_agents << ','
+                     << last_snapshot.total_agents << ','
+                     << last_snapshot.total_packets << ','
+                     << last_snapshot.total_wire_bytes << ','
+                     << std::fixed << std::setprecision(2) << last_snapshot.global_pps << ','
+                     << std::fixed << std::setprecision(2) << last_snapshot.global_bps << ','
+                     << last_snapshot.tcp_packets << ','
+                     << last_snapshot.udp_packets << ','
+                     << last_snapshot.icmp_packets << ','
+                     << last_snapshot.other_packets << ','
+                     << last_snapshot.alerts.size() << '\n';
+            csv_file.flush();
+        }
+
+        if (!opts.quiet) {
+            env.out << "Round " << current_round << ": Online agents: "
+                    << last_snapshot.online_agents << "/" << last_snapshot.total_agents
+                    << " | Packets: " << last_snapshot.total_packets
+                    << " | PPS: " << std::fixed << std::setprecision(1) << last_snapshot.global_pps
+                    << " | BPS: " << std::fixed << std::setprecision(1) << last_snapshot.global_bps
+                    << " | Alerts: " << last_snapshot.alerts.size() << '\n';
+
+            for (const auto& alert : last_snapshot.alerts) {
+                std::string alert_type_name;
+                switch (alert.type) {
+                    case DistributedAlertType::DistributedSynFlood:
+                        alert_type_name = "DistributedSynFlood";
+                        break;
+                    case DistributedAlertType::DistributedVolumetricFlood:
+                        alert_type_name = "DistributedVolumetricFlood";
+                        break;
+                    case DistributedAlertType::DistributedTargetConcentration:
+                        alert_type_name = "DistributedTargetConcentration";
+                        break;
+                }
+                env.out << "[ALERT] " << alert_type_name << " (" << to_string(alert.type) << ") ["
+                        << to_string(alert.severity) << "]: " << alert.description << '\n';
+            }
+        }
+
+        if (opts.rounds > 0 && current_round >= opts.rounds) {
+            break;
+        }
+
+        const auto sleep_total = std::chrono::duration<double>(opts.interval_seconds);
+        const auto sleep_slice = std::chrono::milliseconds(50);
+        auto elapsed = std::chrono::duration<double>::zero();
+        while (elapsed < sleep_total) {
+            if (env.stop_requested_fn && env.stop_requested_fn()) {
+                break;
+            }
+            const auto step = std::min(std::chrono::duration_cast<std::chrono::duration<double>>(sleep_slice), sleep_total - elapsed);
+            std::this_thread::sleep_for(step);
+            elapsed += step;
+        }
+    }
+
+    if (!opts.quiet) {
+        env.out << "\n--- Distributed Aggregation Summary ---\n"
+                << "Total rounds completed: " << current_round << '\n'
+                << "Agents configured: " << opts.agents.size() << '\n'
+                << "Online agents (last round): " << last_snapshot.online_agents << "/" << last_snapshot.total_agents << '\n'
+                << "Total aggregated packets: " << last_snapshot.total_packets << '\n'
+                << "Total aggregated bytes: " << last_snapshot.total_wire_bytes << '\n'
+                << "Active distributed alerts: " << last_snapshot.alerts.size() << '\n';
+    }
+
+    if (total_online_across_rounds == 0) {
+        env.err << "Error: all agents were unreachable across all rounds\n";
+        return ExitCode::RuntimeError;
+    }
+
+    return ExitCode::Ok;
+}
+
 }
 
 ExitCode run_netsight(int argc, const char* const* argv, AppEnv& env) {
@@ -585,6 +709,10 @@ ExitCode run_netsight(int argc, const char* const* argv, AppEnv& env) {
 
     if (parsed.command == CommandKind::Capture) {
         return run_capture(parsed.capture, env);
+    }
+
+    if (parsed.command == CommandKind::Aggregate) {
+        return run_aggregate(parsed.aggregate, env);
     }
 
     return ExitCode::UsageError;

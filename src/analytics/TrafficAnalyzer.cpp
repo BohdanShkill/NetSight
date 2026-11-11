@@ -65,7 +65,9 @@ std::shared_ptr<const StatsSnapshot> TrafficAnalyzer::on_tick(Timestamp now,
         return a.id < b.id;
     });
 
-    return stats_.publish(drops, std::move(alerts));
+    auto syn_targets = syn_.top_targets(16);
+
+    return stats_.publish(drops, std::move(alerts), std::move(syn_targets));
 }
 
 std::shared_ptr<const StatsSnapshot> TrafficAnalyzer::latest_snapshot() const noexcept {

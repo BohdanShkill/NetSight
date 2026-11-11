@@ -187,10 +187,12 @@ StatsSnapshot StatsAggregator::build_snapshot(const DropCounters& external_drops
 }
 
 std::shared_ptr<const StatsSnapshot> StatsAggregator::publish(const DropCounters& external_drops,
-                                                             std::vector<Alert> alerts) {
+                                                             std::vector<Alert> alerts,
+                                                             std::vector<SynTargetEntry> syn_targets) {
     StatsSnapshot snap = build_snapshot(external_drops);
     snap.snapshot_seq = ++seq_;
     snap.alerts = std::move(alerts);
+    snap.syn_targets = std::move(syn_targets);
     auto ptr = std::make_shared<const StatsSnapshot>(std::move(snap));
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
