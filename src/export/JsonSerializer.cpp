@@ -279,6 +279,9 @@ bool parse_agent_stats_json(std::string_view json_str, AgentMetricsReport& out) 
             out.total_wire_bytes = totals.value("wire_bytes", std::uint64_t{0});
             out.pps = totals.value("packets_per_second", 0.0);
             out.bps = totals.value("bytes_per_second", 0.0);
+
+            const double dur = totals.value("duration_seconds", 0.0);
+            out.capture_duration_seconds = (std::isfinite(dur) && dur >= 0.0) ? dur : 0.0;
         }
 
         if (j.contains("l4") && j["l4"].is_object()) {
@@ -292,6 +295,9 @@ bool parse_agent_stats_json(std::string_view json_str, AgentMetricsReport& out) 
             if (l4.contains("icmp") && l4["icmp"].is_object()) {
                 out.icmp_packets = l4["icmp"].value("packets", std::uint64_t{0});
             }
+            if (l4.contains("icmpv6") && l4["icmpv6"].is_object()) {
+                out.icmp_packets += l4["icmpv6"].value("packets", std::uint64_t{0});
+            }
             if (l4.contains("other") && l4["other"].is_object()) {
                 out.other_packets = l4["other"].value("packets", std::uint64_t{0});
             }
@@ -299,20 +305,29 @@ bool parse_agent_stats_json(std::string_view json_str, AgentMetricsReport& out) 
 
         if (j.contains("top_ports") && j["top_ports"].is_array()) {
             out.top_ports.clear();
+            std::size_t count = 0;
             for (const auto& item : j["top_ports"]) {
+                if (count >= 256) {
+                    break;
+                }
                 if (item.is_object()) {
                     PortEntry p{};
                     p.port = item.value("port", std::uint16_t{0});
                     p.packets = item.value("packets", std::uint64_t{0});
                     p.bytes = item.value("bytes", std::uint64_t{0});
                     out.top_ports.push_back(p);
+                    ++count;
                 }
             }
         }
 
         if (j.contains("syn_targets") && j["syn_targets"].is_array()) {
             out.syn_targets.clear();
+            std::size_t count = 0;
             for (const auto& item : j["syn_targets"]) {
+                if (count >= 256) {
+                    break;
+                }
                 if (item.is_object()) {
                     SynTargetEntry t{};
                     const auto ip_str = item.value("dst_ip", std::string{});
@@ -324,6 +339,7 @@ bool parse_agent_stats_json(std::string_view json_str, AgentMetricsReport& out) 
                     t.syn_ack_count = item.value("syn_ack_count", std::uint64_t{0});
                     t.syn_rate_pps = item.value("syn_rate_pps", 0.0);
                     out.syn_targets.push_back(t);
+                    ++count;
                 }
             }
         }
@@ -352,7 +368,11 @@ bool parse_agent_top_talkers_json(std::string_view json_str, AgentMetricsReport&
 
         if (arr_ptr) {
             out.top_talkers.clear();
+            std::size_t count = 0;
             for (const auto& item : *arr_ptr) {
+                if (count >= 256) {
+                    break;
+                }
                 if (item.is_object()) {
                     TalkerEntry t{};
                     const auto ip_str = item.value("ip", std::string{});
@@ -362,6 +382,7 @@ bool parse_agent_top_talkers_json(std::string_view json_str, AgentMetricsReport&
                     t.packets = item.value("packets", std::uint64_t{0});
                     t.bytes = item.value("bytes", std::uint64_t{0});
                     out.top_talkers.push_back(t);
+                    ++count;
                 }
             }
         }

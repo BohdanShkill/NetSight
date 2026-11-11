@@ -42,6 +42,9 @@ netsight_add_test(syn_flood_detector test_syn_flood_detector.cpp)
 netsight_add_test(port_scan_detector test_port_scan_detector.cpp)
 netsight_add_test(traffic_analyzer test_traffic_analyzer.cpp)
 netsight_add_test(distributed_aggregator test_distributed_aggregator.cpp)
+netsight_add_test(interval_tracker test_interval_tracker.cpp
+    LIBS nlohmann_json::nlohmann_json
+)
 netsight_add_test(agent_poller test_agent_poller.cpp
     LIBS httplib::httplib nlohmann_json::nlohmann_json
 )

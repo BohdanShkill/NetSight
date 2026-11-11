@@ -16,6 +16,7 @@ add_library(netsight_core STATIC
     analytics/PortScanDetector.cpp
     analytics/TrafficAnalyzer.cpp
     analytics/DistributedAggregator.cpp
+    analytics/IntervalTracker.cpp
 )
 
 target_include_directories(netsight_core PUBLIC 
