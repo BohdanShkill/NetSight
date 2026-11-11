@@ -38,6 +38,11 @@ struct PortAggData {
     std::size_t witness_count{0};
 };
 
+struct IntervalPortData {
+    std::uint64_t packets{0};
+    std::size_t witness_count{0};
+};
+
 }
 
 DistributedAggregator::DistributedAggregator(DistributedAggregatorConfig cfg)
@@ -64,6 +69,7 @@ GlobalNetworkSnapshot DistributedAggregator::aggregate(const std::vector<AgentMe
 
     std::map<IpAddress, TrafficCounter> talker_map;
     std::map<std::uint16_t, PortAggData> port_map;
+    std::map<std::uint16_t, IntervalPortData> interval_port_map;
     std::map<SynTargetKey, SynAggData> syn_map;
 
     std::size_t udp_witnesses = 0;
@@ -77,20 +83,11 @@ GlobalNetworkSnapshot DistributedAggregator::aggregate(const std::vector<AgentMe
         ++snap.online_agents;
         snap.total_packets += r.total_packets;
         snap.total_wire_bytes += r.total_wire_bytes;
-        snap.global_pps += r.pps;
-        snap.global_bps += r.bps;
 
         snap.tcp_packets += r.tcp_packets;
         snap.udp_packets += r.udp_packets;
         snap.icmp_packets += r.icmp_packets;
         snap.other_packets += r.other_packets;
-
-        if (r.udp_packets > 0) {
-            ++udp_witnesses;
-        }
-        if (r.icmp_packets > 0) {
-            ++icmp_witnesses;
-        }
 
         for (const auto& t : r.top_talkers) {
             auto& val = talker_map[t.ip];
@@ -113,6 +110,28 @@ GlobalNetworkSnapshot DistributedAggregator::aggregate(const std::vector<AgentMe
                 val.syn_ack_count += s.syn_ack_count;
                 val.syn_rate_pps += s.syn_rate_pps;
                 ++val.witness_count;
+            }
+        }
+
+        if (r.interval.valid) {
+            ++snap.interval_agents;
+            snap.global_pps += r.interval.pps;
+            snap.global_bps += r.interval.bps;
+            snap.interval_packets += r.interval.packets;
+            snap.interval_udp += r.interval.udp;
+            snap.interval_icmp += r.interval.icmp;
+
+            if (r.interval.udp > 0) {
+                ++udp_witnesses;
+            }
+            if (r.interval.icmp > 0) {
+                ++icmp_witnesses;
+            }
+
+            for (const auto& d : r.interval.port_deltas) {
+                auto& pdata = interval_port_map[d.port];
+                pdata.packets += d.packets;
+                ++pdata.witness_count;
             }
         }
     }
@@ -202,8 +221,8 @@ GlobalNetworkSnapshot DistributedAggregator::aggregate(const std::vector<AgentMe
         }
     }
 
-    if (snap.total_packets > 0 && snap.global_pps >= cfg_.global_volumetric_pps_threshold) {
-        const double udp_share = static_cast<double>(snap.udp_packets) / static_cast<double>(snap.total_packets);
+    if (snap.interval_packets > 0 && snap.global_pps >= cfg_.global_volumetric_pps_threshold) {
+        const double udp_share = static_cast<double>(snap.interval_udp) / static_cast<double>(snap.interval_packets);
         if (udp_witnesses >= cfg_.min_agents && udp_share >= cfg_.protocol_dominance_ratio) {
             std::ostringstream oss;
             oss << "Distributed Volumetric UDP Flood observed across " << udp_witnesses
@@ -223,7 +242,7 @@ GlobalNetworkSnapshot DistributedAggregator::aggregate(const std::vector<AgentMe
             snap.alerts.push_back(std::move(alert));
         }
 
-        const double icmp_share = static_cast<double>(snap.icmp_packets) / static_cast<double>(snap.total_packets);
+        const double icmp_share = static_cast<double>(snap.interval_icmp) / static_cast<double>(snap.interval_packets);
         if (icmp_witnesses >= cfg_.min_agents && icmp_share >= cfg_.protocol_dominance_ratio) {
             std::ostringstream oss;
             oss << "Distributed Volumetric ICMP Flood observed across " << icmp_witnesses
@@ -244,9 +263,9 @@ GlobalNetworkSnapshot DistributedAggregator::aggregate(const std::vector<AgentMe
         }
     }
 
-    if (snap.total_packets > 0 && snap.global_pps >= cfg_.global_volumetric_pps_threshold) {
-        for (const auto& [port, data] : port_map) {
-            const double port_share = static_cast<double>(data.packets) / static_cast<double>(snap.total_packets);
+    if (snap.interval_packets > 0 && snap.global_pps >= cfg_.global_volumetric_pps_threshold) {
+        for (const auto& [port, data] : interval_port_map) {
+            const double port_share = static_cast<double>(data.packets) / static_cast<double>(snap.interval_packets);
             if (data.witness_count >= cfg_.min_agents && port_share >= cfg_.target_port_concentration_ratio) {
                 std::ostringstream oss;
                 oss << "Distributed Target Concentration on port " << port

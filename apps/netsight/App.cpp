@@ -1,6 +1,7 @@
 #include "App.hpp"
 
 #include "netsight/analytics/DistributedAggregator.hpp"
+#include "netsight/analytics/IntervalTracker.hpp"
 #include "netsight/analytics/TrafficAnalyzer.hpp"
 #include "netsight/capture/PcapLiveSource.hpp"
 #include "netsight/core/Time.hpp"
@@ -582,6 +583,7 @@ ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
     agg_cfg.global_volumetric_pps_threshold = opts.pps_threshold;
 
     DistributedAggregator aggregator{agg_cfg};
+    IntervalTracker tracker{opts.agents.size()};
 
     AgentPollerConfig poller_cfg{};
     poller_cfg.timeout_ms = static_cast<std::uint32_t>(std::clamp(opts.interval_seconds * 1000.0, 100.0, 5000.0));
@@ -596,7 +598,7 @@ ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
             env.err << "Error: failed to open CSV output file: " << *opts.csv_file << '\n';
             return ExitCode::RuntimeError;
         }
-        csv_file << "round,online_agents,total_agents,total_packets,total_wire_bytes,global_pps,global_bps,tcp_packets,udp_packets,icmp_packets,other_packets,active_alerts\n";
+        csv_file << "round,online_agents,total_agents,total_packets,total_wire_bytes,global_pps,global_bps,tcp_packets,udp_packets,icmp_packets,other_packets,active_alerts,interval_packets,interval_agents\n";
         csv_file.flush();
     }
 
@@ -615,6 +617,7 @@ ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
 
         ++current_round;
         auto reports = poller.poll_all(opts.agents);
+        tracker.annotate(reports);
         last_snapshot = aggregator.aggregate(reports);
         total_online_across_rounds += last_snapshot.online_agents;
 
@@ -630,7 +633,9 @@ ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
                      << last_snapshot.udp_packets << ','
                      << last_snapshot.icmp_packets << ','
                      << last_snapshot.other_packets << ','
-                     << last_snapshot.alerts.size() << '\n';
+                     << last_snapshot.alerts.size() << ','
+                     << last_snapshot.interval_packets << ','
+                     << last_snapshot.interval_agents << '\n';
             csv_file.flush();
         }
 
