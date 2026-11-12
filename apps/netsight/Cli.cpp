@@ -67,9 +67,9 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
                             ->excludes(opt_file);
 
     int snaplen_val = 65535;
-    auto* opt_snaplen = cap_cmd->add_option("--snaplen", snaplen_val, "Snapshot length in bytes (64..262144)")
-                               ->check(CLI::Range(64, 262144))
-                               ->excludes(opt_file);
+    cap_cmd->add_option("--snaplen", snaplen_val, "Snapshot length in bytes (64..262144)")
+           ->check(CLI::Range(64, 262144))
+           ->excludes(opt_file);
 
     bool no_promisc = false;
     cap_cmd->add_flag("--no-promisc", no_promisc, "Disable promiscuous mode")
