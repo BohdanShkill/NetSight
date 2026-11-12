@@ -72,39 +72,39 @@ The polling rounds send out HTTP GET requests in waves and calculate the deltas 
 
 ```mermaid
 flowchart TD
-    Start(["New round, every --interval seconds"]) --> Waves
+    Start([New round every --interval seconds]) --> Waves
 
-    subgraph S1["Step 1: poll agents (AgentPoller)"]
-        Waves["Split K agents into waves of up to 8"] --> Req["Each agent in a wave, in parallel:<br/>GET /api/v1/stats + /api/v1/top-talkers"]
-        Req --> Ok{"Answered within --timeout-ms<br/>and body under 1 MiB?"}
-        Ok -- yes --> Online["Online report:<br/>cumulative counters since agent start"]
-        Ok -- no --> Offline["Offline report:<br/>error reason only"]
+    subgraph S1[Step 1: poll agents — AgentPoller]
+        Waves[Split K agents into waves of up to 8] --> Req[For each agent in a wave, in parallel:<br/>GET /api/v1/stats + /api/v1/top-talkers]
+        Req --> Ok{Response received within --timeout-ms<br/>and body under 1 MiB?}
+        Ok -- yes --> Online[Online report:<br/>cumulative counters since agent start]
+        Ok -- no --> Offline[Offline report:<br/>error reason only]
     end
 
     Online --> Reset
 
-    subgraph S2["Step 2: cumulative to interval (IntervalTracker)"]
-        Reset{"Counter smaller than last round?<br/>i.e. agent restarted"}
-        Reset -- yes --> Zero["Previous baseline = 0"]
+    subgraph S2[Step 2: convert cumulative counters to interval deltas — IntervalTracker]
+        Reset{Counter smaller than in the last round?<br/>i.e., agent restarted}
+        Reset -- yes --> Zero[Previous baseline = 0]
         Reset -- no --> Delta
-        Zero --> Delta["delta = current - previous<br/>pps = delta packets / delta time"]
-        Delta --> Save["Remember current values<br/>as baseline for next round"]
+        Zero --> Delta[delta = current - previous<br/>pps = delta packets / delta time]
+        Delta --> Save[Save current values<br/>as the baseline for the next round]
     end
 
     Save --> Sum
     Offline --> Sum
 
-    subgraph S3["Step 3: detect attacks (DistributedAggregator)"]
-        Sum["Sum interval deltas of all online agents"] --> C1 & C2 & C3
-        C1{"C1 SYN flood:<br/>SYN rate at least --syn-threshold<br/>and SYN-ACK/SYN at most --syn-ack-ratio"}
-        C2{"C2 volumetric:<br/>pps at least --pps-threshold<br/>and UDP or ICMP share at least --proto-share"}
-        C3{"C3 target concentration:<br/>pps at least --pps-threshold<br/>and one port share at least --port-share"}
-        C1 & C2 & C3 -- "yes, seen by at least --min-agents agents" --> Alert["Distributed alert"]
+    subgraph S3[Step 3: detect attacks — DistributedAggregator]
+        Sum[Sum interval deltas from all online agents] --> C1 & C2 & C3
+        C1{C1 SYN flood:<br/>SYN rate at least --syn-threshold<br/>and SYN-ACK/SYN ratio at most --syn-ack-ratio}
+        C2{C2 volumetric:<br/>pps at least --pps-threshold<br/>and UDP or ICMP share at least --proto-share}
+        C3{C3 target concentration:<br/>pps at least --pps-threshold<br/>and a single port's share at least --port-share}
+        C1 & C2 & C3 -->|yes, detected by at least --min-agents agents| Alert[Distributed alert]
     end
 
     Alert --> Out
     C1 & C2 & C3 -- no --> Out
-    Out["Print round to console, append CSV row"] --> Start
+    Out[Print round results to the console and append a CSV row] --> Start
 ```
 
 ---
