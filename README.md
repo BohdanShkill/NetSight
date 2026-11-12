@@ -1,16 +1,14 @@
 # NetSight
 
-<p align="center">
-  A C++17-based, lightweight and multi-threaded network packet analyzer and distributed anomaly detector.
 </p>
-
 <p align="center">
-  Every release generates a set of tests.Tests are made for each release.
   <img src="https://img.shields.io/badge/C%2B%2B-17-blue.svg?logo=c%2B%2B" alt="C++17">
   <img src="https://img.shields.io/badge/CMake-3.20%2B-064F8C.svg?logo=cmake" alt="CMake 3.20+">
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-lightgrey.svg" alt="Platform: Linux | Windows">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
 </p>
+<p align="center">
+  A C++17-based, lightweight and multi-threaded network packet analyzer and distributed anomaly detector.
 
 ---
 
