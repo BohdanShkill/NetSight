@@ -1,36 +1,37 @@
 # NetSight
 
+<p align="center">
+  Lightweight Multi-threaded network packet analyzer and distributed Anomaly detector written in C++17.
 </p>
+
 <p align="center">
   <img src="https://img.shields.io/badge/C%2B%2B-17-blue.svg?logo=c%2B%2B" alt="C++17">
   <img src="https://img.shields.io/badge/CMake-3.20%2B-064F8C.svg?logo=cmake" alt="CMake 3.20+">
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-lightgrey.svg" alt="Platform: Linux | Windows">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
 </p>
-<p align="center">
-  A C++17-based, lightweight and multi-threaded network packet analyzer and distributed anomaly detector.
 
 ---
 
 ## Overview
 
-NetSight is a cross-platform network telemetry agent & distributed DDoS aggregator that has been implemented in modern (C++17) c++. It works in two parallel ways:
+NetSight is a modern C++17 cross-platform network telemetry agent and distributed DDoS aggregator. It is available in two modes:
 
-Live traffic capturing from OS interfaces (libpcap / Npcap), offline .pcap replay, reading of Link/Network/Transport headers without any undefined behaviors, running a sliding window anomaly detector (SYN flood / port scan) and exporting of time-series/summary .csv files, and a real-time metrics service provided by an embedded http rest service.
-2. Distributed Correlation Aggregator (`aggregate`): Collects the data sent from multiple NetSight agents in a bounded parallel waves and calculates the per-round interval deltas (`IntervalTracker`), and correlate attacks from multiple vantage points (`DistributedSynFlood`, DistributedVolumetricFlood` and DistributedTargetConcentration`).
+1. Telemetry Agent (`capture`) - Captures live traffic from OS interfaces (libpcap / Npcap) and replays offline .pcap files, parses Link/Network/Transport headers - No UAE (Undefined behavior errors), exports time-series and summary .csv files, real-time metrics through embedded REST API.
+Distributed Correlation Aggregator (`aggregate`): polls many NetSight agents in bounded parallel waves, calculates the total counter and converts it to a delta per round (IntervalTracker), and correlates attacks observed from different vantage points (DistributedSynFlood, DistributedVolumetricFlood, DistributedTargetConcentration).
 
 ### Key Capabilities
 
-UB-Free Byte-Level Parsing: Parses Ethernet (including up to 2 stacked VLAN tags 0x8100/0x88A8/0x9100), BSD Null/Loopback, and Linux SLL link layers, IPv4, IPv6, ARP network layers, and TCP, UDP, ICMP, and ICMPv6 transport protocols without endian-dependency or `reinterpret_cast`, but with bounds-checked `ByteReader` operations.
-Bounded Backpressure Pipeline: provides a way to transport packets from the capture thread to the analytics worker with the help of a `BoundedQueue` to prevent the memory queue from growing when capturing at a high rate in the midst of a large packet flood (can be lossless and used for off-line analysis of a .pcap).
+Ethernet (up to 2 stacked VLAN tags: 0x8100 / 0x88A8 / 0x9100), BSD Null/Loopback and Linux SLL link layers, IPv4, IPv6 and ARP network layers, TCP, UDP, ICMP and ICMPv6 transport protocols. There is no endianness assumptions, no reinterpret_cast and all reads are bound checked in the ByteReader.
+The bounded backpressure pipeline is the name of the pipeline, due to a high-rate flood in the pipe from the capture thread to the analytics worker, the pipeline keeps memory bounded. It may also be used in lossless mode (blocking mode) for analysis of an offline `.pcap` file.
 * **Single-Node Sliding-Window Detectors:**
-  SynFloodDetector: Continues to track the SYN and SYN-ACK for each (dst_ip, dst_port) endpoint, and implements hysteresis recovery, while having limited target/alert tables.
-  PortScanDetector: Keeps a window of memory of limited size for each source IP, in which to look for a set of destination ports.
+  It is also covered by the `SynFloodDetector`, which visualizes the number of SYN and SYN-ACK received at a `(dst_ip, dst_port)` endpoint, and activates the recovery with the help of the hysterisis and limits the size of the `target_table` and the `alert_table`.
+  Per source-IP a window of interesting destination ports, limited by `PortScanDetector`, is kept.
 * **Interval-Based Distributed Correlation:**
-  The agents are asked of in waves of up to `--max-parallel=` (default 8) requests; with a timeout per request in milliseconds (`--timeout-ms`) and a timeout on the agents' response body sizes (a default of 1 MiB).
-  For each agent, it computes deltas per round for the `packets`, `wire_bytes`, `tcp`, `udp`, `icmp` + `icmpv6`, `other`, `pps`, `bps` packet counters and for each port, it computes the `port_deltas`. These deltas are calculated without any requirement to gap fill or deal with counter resets.
-  `DistributedAggregator` is a stateless function against enriched `AgentMetricsReport` values that provides a global result.
-Clean Layering: `netsight_core` is completely independent of OS capture drivers (libpcap/Npcap), keeping native capture bindings in `netsight_capture` and orchestration of this in the CLI and runtime in `netsight_app.
+  We send our agents in waves of 8 simultaneous requests per request; we use the wave timeout (`--timeout-ms`) and the max body size of returned responses (1 MiB).
+  For each agent, `IntervalTracker` calculates per-round deltas for packets, wire_bytes, tcp, udp, icmp (+ icmpv6) and other, interval pps / bps and per-port port_deltas. There will be no agents that reset (counter reset) and no missed rounds.
+  The `AgentMetricsReport` values are passed to a stateless function, named `DistributedAggregator`, for each value in this list, and are aggregated into a single `GlobalNetworkSnapshot` value.Each of these values in the list are passed to a stateless function named DistributedAggregator, where they are aggregated into a single GlobalNetworkSnapshot value.
+Clean Layering: The `netsight_core` does not rely on the OS capture drivers. The native capture bindings are now in netsight_capture and the parsing and runtime orchestration of capture commandline is in the netsight app.
 
 ---
 
@@ -65,9 +66,9 @@ Clean Layering: `netsight_core` is completely independent of OS capture drivers 
 +-------------------------------------------------------------------+
 ```
 
-This command is used for Distributed Aggregation Round.This command is for Distributed Aggregation Round.
+### Distributed Aggregation Round
 
-Every polling round performs a bounded parallel wave of HTTP GET requests, transforms count-based agents to deltas per polling round and applies attack criteria distributed over the rounds:
+The polling rounds send out HTTP GET requests in waves and calculate the deltas of each round as the difference between the agent counters that returned from each round and the total count of the previous polling round, which is then applied to the distributed attack criteria:
 
 ```mermaid
 sequenceDiagram
@@ -105,10 +106,10 @@ sequenceDiagram
 * **C++ Compiler:** GCC 9+, Clang 10+, or MSVC 2019+ (C++17 required)
 * **Build System:** CMake 3.20+
 * **Packet Capture Library:**
-  ```sudo apt install libpcap-dev on Linux.
-  To use the script, install Npcap SDK and set the -DNPCAP_SDK_DIR environment variable to point to the SDK directory (which is found at C:/npcap-sdk by default):
+  On Linux: Install `libpcap-dev` using apt: `apt install libpcap-dev`
+  For Windows: Set this parameter to Npcap SDK directory (default `C:/npcap-sdk`) and install Npcap SDK.
 
-CMake also automatically downloads third-party libraries including GoogleTest v1.15.2, nlohmann/json v3.11.3, cpp-httplib v0.18.5 and CLI11 v2.6.2 by using FetchContent.
+GoogleTest v1.15.2, nlohmann/json v3.11.3, cpp-httplib v0.18.5 and CLI11 v2.6.2 are automatically downloaded by CMake's FetchContent.
 
 ### Building from Source
 
@@ -128,21 +129,23 @@ cmake --build build --config Debug
 
 ### Live Packet Capture Permissions
 
-On Linux: use the sudo command or set the CAP_NET_RAW capability on the binary:
+For Linux: use the `sudo` prefix or give the binary these capabilities: `sudo setcap -c cap_net_raw,cap_net_admin,cap_net_bind+ep ./raw-socket`
+
   ```bash
   sudo setcap cap_net_raw,cap_net_admin=eip ./build/apps/netsight/netsight
   ```
-For Windows: Install the [Npcap](https://npcap.com/) runtime driver. If Npcap is installed with a "Restrict driver access to Administrators only" restriction, use elevated terminal to execute live captures. Without installing Npcap (MSVC: `/DELAYLOAD:wpcap.dll`), offline analysis of a PCAP file and distributed `aggregate` mode is possible.
+
+For Windows: Use [Npcap](https://npcap.com/) as a runtime driver. To get live captures without limitation, even if Npcap was installed with the option Restrict driver access to Administrators only, you would need to access Npcap's terminal from an elevated terminal. The ability for offline analysis of `.pcap` files, as well as the possibility to use an aggregate mode (which saves time slowing down the computer during analysis), are possible even if Npcap is not installed thanks to the delay loading of MSVC (`/DELAYLOAD:wpcap.dll`).
 
 ### Running Tests
 
-All unit/lifecycle tests are controlled through CTest and executed without root privileges or OS capture drivers:
+All unit and lifecycle tests run through CTest and need neither root privileges nor OS capture drivers:
 
 ```bash
 ctest --test-dir build --output-on-failure -C Debug
 ```
 
-To add privileged live-capture integration tests for Linux:
+To also run the privileged live-capture integration tests on Linux:
 
 ```bash
 sudo env NETSIGHT_REQUIRE_LIVE=1 ctest --test-dir build -C Debug -L integration --output-on-failure
@@ -152,11 +155,15 @@ sudo env NETSIGHT_REQUIRE_LIVE=1 ctest --test-dir build -C Debug -L integration 
 
 ## CLI Reference
 
-Run time errors will result in an exit code of 1 (`usage / argument validation error`), and if one or more agents does not respond to the call, the exit code will be 1 (capture/IO error).
+| Exit code | Meaning |
+| :---: | :--- |
+| `0` | Success |
+Run-time error `1` (capture/IO failure or all agents unreachable over all rounds in `aggregate`) | Run-time error |
+The use of, or mis-use of, arguments causes an error, message: `2` | Usage / argument validation error |
 
 ### `netsight list`
 
-Lists the available OS network capture interfaces and their index and description.
+Prints list of available OS capture interfaces and their description and index.
 
 ```bash
 ./build/apps/netsight/netsight list
@@ -164,25 +171,25 @@ Lists the available OS network capture interfaces and their index and descriptio
 
 ### `netsight capture`
 
-Replays live traffic from an interface, or offline traffic from a .pcap file.
+Streams and replays live network traffic or an offline `.pcap` file.
 
 | Option | Default | Description |
 | :--- | :--- | :--- |
-| `-i, --interface <name\|idx>` | — | Live capture interface name or index (mutually exclusive with `-r`) |
+Live capture interface name or index (mutually exclusive with `-r`) | `-i, --interface <name\|idx>` |
 | `-r, --read-file <path>` | — | Path to offline `.pcap` file (mutually exclusive with `-i`) |
 | `--bpf <expr>` | `""` | BPF filter expression (live capture only; excludes `-r`) |
 | `--snaplen <bytes>` | `65535` | Capture snapshot length (`64..262144`; excludes `-r`) |
-| `--no-promisc` | `false` | Disable promiscuous mode (excludes `-r`) |
-| `--filter-ip <ip>` | — | Filter parsed packets matching source or destination IPv4/IPv6 |
-| `--filter-port <port>` | — | Filter parsed packets matching source or destination L4 port (`1..65535`) |
+`true, false`: When set to true, disable promiscuous mode (option not used with -r)
+- —— | | — | | Keep parsed packets with the same source or destination address as this IPv4/IPv6 address — | | | | | | |
+| `--filter-port <port>` — | — | | Filter: Only keep packets that are parsed at L4 end points that have a port number of <port> (where 1..65535 are the available port numbers) |
 | `--duration <sec>` | — | Auto-stop capture after `N` seconds (`> 0.0`) |
 | `--count <packets>` | — | Auto-stop capture after `N` accepted packets (`>= 1`) |
 | `--queue-size <cap>` | `8192` | Internal bounded packet queue capacity (`1..1048576`) |
-| `--csv <prefix>` | — | Write `<prefix>_timeseries.csv` and `<prefix>_summary.csv` |
+Writes <prefix>_timeseries.csv and <prefix>_summary.csv | `--csv <prefix>` | — | Write <prefix>_timeseries.csv and <prefix>_summary.csv
 | `--api-port <port>` | — | Enable embedded REST API server on port (`0..65535`, `0` = ephemeral) |
 | `--api-host <host>` | `127.0.0.1` | Bind host/IP for REST API (requires `--api-port`) |
-| `--api-token <token>` | `""` | Bearer token for REST API endpoints except `/api/v1/health` (requires `--api-port`) |
-| `-q, --quiet` | `false` | Suppress periodic TTY status and final summary |
+`""` | Bearer token for the REST API endpoints (except /api/v1/health | --api-port) |
+`--quiet, -q: false` | suppresses periodic TTY status and final summary |
 
 **Examples:**
 
@@ -196,26 +203,26 @@ Replays live traffic from an interface, or offline traffic from a .pcap file.
 
 ### `netsight aggregate`
 
-Multiples NetSight agents and identifies distributed attacks from vantage points.
+If you have multiple Vantage agents on multiple NetSight servers, you can use a poll to detect distributed attacks.
 
 | Option | Default | Description |
 | :--- | :--- | :--- |
-`-a, --agent <host:port>` | *(required)* | Agent endpoint (`host:port`, optional `http://`/`https://` prefix); can be repeated |
+| `-a, --agent <host:port>` | *(required)* | Agent endpoint (`host:port`, optional `http://` / `https://` prefix); can be repeated |
 | `--api-token <token>` | `""` | Bearer token sent to all agents |
 | `--interval <sec>` | `1.0` | Polling interval in seconds (`> 0.0`) |
 | `--timeout-ms <ms>` | `1000` | Per-request HTTP connect/read timeout in ms (`50..60000`) |
-| `--rounds <n>` | `0` | Number of polling rounds (`0` = run until `SIGINT`/`SIGTERM`) |
-Minimum number of witness agents needed for a distributed alert (>= 1) | `--min-agents <k> 2`
+| `--rounds <n>` | `0` | Number of polling rounds (`0` = run until `SIGINT` / `SIGTERM`) |
+The minimum number of agents to see a distributed alert (>= 1). | `--min-agents <k>` | `2` | Minimum number of witness agents to see a distributed alert (>= 1). |
 | `--syn-threshold <pps>` | `100.0` | Global distributed SYN flood rate threshold in SYN/s (`> 0.0`) |
 | `--pps-threshold <pps>` | `500.0` | Global volumetric flood threshold in packets/s (`> 0.0`) |
 | `--syn-ack-ratio <ratio>` | `0.25` | Maximum `SYN-ACK / SYN` ratio for SYN flood detection (`(0.0, 1.0]`) |
-| `--proto-share <share>` | `0.70` | Minimum dominant protocol share (`UDP` or `ICMP`-family) (`(0.0, 1.0]`) |
+| `--proto-share <share>` | `0.70` | Minimum dominant protocol share, `UDP` or `ICMP`-family (`(0.0, 1.0]`) |
 | `--port-share <share>` | `0.60` | Minimum destination port share for target concentration (`(0.0, 1.0]`) |
-`--csv <path>` | — | Output per-round global metrics to a file of path name |
-`-q, --quiet` | `false` | Suppress frequency of console output and summary at end of processing |
+— | `--csv <path>` | — | Output per-round global metrics to a CSV file |
+`-q, --quiet` | `false` | Do not print console reports or final summary every so often |
 
 > [!NOTE]
-> At worst, the polling round lasts a total of $\lceil K / C \rceil \cdot 2$ times $t_{\text{timeout}}$ (where $C = 8$ is the number of agents per polling round, and each agent gets two sequential requests: one for /api/v1/stats and the other for /api/v1/top-talkers). If this bound is greater than the value of the option `--interval`, `aggregate` prints a startup warning to the terminal `stderr` and proceeds anyway.
+> The maximum number of requests that can be issued is 2xQ per polling round (where Q = 8), with Q = 8 chosen to allow for 4 agents per polling round, and the 2 requests per agent for `/api/v1/stats` and `/api/v1/top-talkers`. The default setting for `--interval` is greater than this bound, so if so, `aggregate` prints a message to `stderr` at startup and continues running.
 
 **Example:**
 
@@ -239,15 +246,15 @@ Minimum number of witness agents needed for a distributed alert (>= 1) | `--min-
 
 ## REST API Reference
 
-When using the command-line argument `--api-port` with the `capture` mode, NetSight provides read-only JSON endpoints (only `GET`, no other HTTP method will return anything other than a `405 Method Not Allowed`). When `--api-token` is set, all endpoints (except for `/api/v1/health`) must include the following header: `Authorization: Bearer <token>`.
+NetSight provides read only JSON endpoints when it is executed via the `capture` with the `--api-port` argument. Only `GET` is supported, any other method will return a `405 Method Not Allowed`. When using the `--api-token` option, all of the endpoints (other than `/api/v1/health`) require the header `Authorization: Bearer <token>`.
 
 | Endpoint | Query Parameters | Description |
 | :--- | :--- | :--- |
-`GET /api/v1/health` | — | Health, version and current `snapshot_seq` (always public) |
-The following are returned as part of the cumulative totals, parse counts, L3/L4 breakdown, `top_ports`, `syn_targets`, and `active_alerts` count: |
-List of top ranked source/talker IPs based on bytes/packets.List of top-talkers by source/talker ip by using ‘limit’ parameter (1 up to 1000).
-| `GET /api/v1/alerts` | `state` (`all`\|`active`\|`resolved`), `limit` (`1..1000`) | Single-node `syn_flood` and `port_scan` alerts |
-— | Packet filter, bounded queue, kernel/interface, and untracked table drop counters.
+Get Health Status, Version and Current `snapshot_seq` (public always) |
+GET /api/v1/stats | — | Cumulative totals, parse counts, L3/L4 breakdown, top_ports, syn_targets and active alert count |
+| `GET /api/v1/top-talkers` | `limit` (`1..1000`) | Top source IPs ranked by traffic volume |
+| `GET /api/v1/alerts` | `state` (`all` \| `active` \| `resolved`), `limit` (`1..1000`) | Single-node `syn_flood` and `port_scan` alerts |
+The Packet filter, bounded queue, kernel/interface and untracked-table drop counters.The counters for packet filter, bounded queue, kernel/interface and untracked-table drops.
 
 ---
 
@@ -255,12 +262,17 @@ List of top ranked source/talker IPs based on bytes/packets.List of top-talkers 
 
 ### Agent Capture (`--csv <prefix>`)
 
-`<prefix>_timeseries.csv`: 1-second bucketed deltas: ` interval_start,packets,bytes,tcp_packets,udp_packets,icmp_packets,other_packets,parse_errors,dropped,active_alerts`.
-`<prefix>_summary.csv`: Key-value session report (section,item,metric,value), includes metadata, totals, parse statuses, L3/L4 protocol breakdown, protocol drops, top talkers, top ports and alerts.
+`<prefix>_timeseries.csv`: deltas in 1-second buckets:
 
-Distributed Aggregator, named --csv <path> stores the resultset in the specified path as a comma delimited file.
+  ```csv
+  interval_start,packets,bytes,tcp_packets,udp_packets,icmp_packets,other_packets,parse_errors,dropped,active_alerts
+  ```
 
-Rows per round, both cumulative and interval (as bytes/s: `global_pps`, `global_bps`, as packets: `interval_packets`, as agents: `interval_agents`)
+`<prefix>_summary.csv`: key-value session report (section,item,metric,value): metadata, totals, parse statuses, L3/L4 protocol breakdown, drops, top talkers, top ports and alerts.
+
+### Distributed Aggregator (`--csv <path>`)
+
+One row for each round of the polling. Intervals have packet delta results like `interval_packets` (packets) and the number of agents in the interval `interval_agents` (agents), and cumulative totals: `global_pps` (packets/s) and `global_bps` (bytes/s).
 
 ```csv
 round,online_agents,total_agents,total_packets,total_wire_bytes,global_pps,global_bps,tcp_packets,udp_packets,icmp_packets,other_packets,active_alerts,interval_packets,interval_agents
@@ -270,11 +282,12 @@ round,online_agents,total_agents,total_packets,total_wire_bytes,global_pps,globa
 
 ## Assumptions & Known Limitations
 
-Distributed correlation: Non-overlapping vantage points for agents. If the same network flow passes through multiple agents, the packets, byte rates, SYN target rates per network flow are added on a per-reporting-agent basis (which is documented and covered by characterization tests).
-Each agent has its own sliding window `syn_targets` based on the local packet timestamps. Aggregated SYN flood metrics are taken across snapshots polled in the same round without necessarily relying on cross-agent timestamp alignment and clock synchronization.
-first-observation baseline equals zero: When creating a new agent, the baseline will be zero, and the first interval that is observed will be the agent's cumulative history since the start of the program. This maintains the backwards compatibility of single-round (--rounds 1) runs and offline playback.
-Static packet-time clock on idle agents: The interval rates (e.g., pps, bps) are calculated based on (packet) timestamps and not wall-clock time. If no new packets are received in an interval while `duration_seconds` does not advance (`dt == 0` and `d_packets == 0`), then the interval is marked valid, but does not contribute to interval criteria.If no new packets are received in an interval while `duration_seconds` does not advance (`dt == 0` and `d_packets == 0`), then the interval is marked valid, but does not contribute to interval criteria.
-By default, each agent exposes the following top-level settings: `syn_targets`: up to 16, `top_ports`: up to 10, and `AgentPoller` / `JsonSerializer`: up to 256 elements per array of parsed JSON. `IntervalTracker` keeps up to 64 ports per agent. A port is skipped once in the first k rounds it is added to the agent's top-K list, since its pre-entry baseline is not known.
+Non-overlapping vantage points: distributed correlation – each agent views a non-overlapping slice of traffic. If a particular flow goes through multiple agents, its packets, byte rates and SYN target rates will be totalled once per reporting agent. This behavior is recorded and has a characterization test.
+Unsynchronized SYN windows: each agent calculates its own sliding-window `syn_targets` using local packet timestamps. No cross-agent timestamp alignment or clock synchronization is required in the aggregator process, it only combines the snapshots polled in a round.
+A baseline of zero is when a new agent is introduced and they begin at zero, meaning they are there for their whole history since startup. This preserves backward compatibility with the single round runs (`--rounds 1`) and offline replays.
+Interval rates (`pps`, `bps`) are based on packet timestamps (`duration_seconds`), and not wall clock time on idle agents. If the packet clock is idle, then that interval is considered invalid if d_packets is > 0 and valid if d_packets is 0, but contributes zero to the criteria C2 – C3.
+The maximum for each agent to report is 16: `syn_targets` and 10: `top_ports`. `AgentPoller` / `JsonSerializer` will parse at most 256 elements any single JSON array while maintaining up to 64 ports for each agent in the `IntervalTracker`. A port that is just added to an agent's top-K list is excluded for one round since its starting point before being added is not known.
+
 
 ---
 
