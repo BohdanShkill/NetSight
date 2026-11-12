@@ -71,30 +71,40 @@ Clean Layering: The `netsight_core` does not rely on the OS capture drivers. The
 The polling rounds send out HTTP GET requests in waves and calculate the deltas of each round as the difference between the agent counters that returned from each round and the total count of the previous polling round, which is then applied to the distributed attack criteria:
 
 ```mermaid
-sequenceDiagram
-    participant App as run_aggregate
-    participant Poller as AgentPoller
-    participant Agents as "Agents 1..K"
-    participant Tracker as IntervalTracker
-    participant Agg as DistributedAggregator
+flowchart TD
+    Start(["New round, every --interval seconds"]) --> Waves
 
-    loop every --interval seconds
-        App->>Poller: poll_all(agents)
-        loop waves of max_parallel (C = 8)
-            par up to C agents concurrently
-                Poller->>Agents: GET /api/v1/stats, /api/v1/top-talkers (timeout_ms)
-                Agents-->>Poller: JSON / error / size limit
-            end
-        end
-        Poller-->>App: reports (cumulative counters)
-        App->>Tracker: annotate(reports)
-        Note over Tracker: Per online agent:<br/>delta = current - previous<br/>reset baseline if counter decreases<br/>compute interval pps/bps & port_deltas
-        Tracker-->>App: reports + IntervalMetrics
-        App->>Agg: aggregate(reports)
-        Note over Agg: C1 (SYN Flood): sliding-window syn_targets<br/>C2 (Volumetric) & C3 (Port Concentration): IntervalMetrics only
-        Agg-->>App: GlobalNetworkSnapshot
-        App->>App: console output + optional CSV row
+    subgraph S1["Step 1: poll agents (AgentPoller)"]
+        Waves["Split K agents into waves of up to 8"] --> Req["Each agent in a wave, in parallel:<br/>GET /api/v1/stats + /api/v1/top-talkers"]
+        Req --> Ok{"Answered within --timeout-ms<br/>and body under 1 MiB?"}
+        Ok -- yes --> Online["Online report:<br/>cumulative counters since agent start"]
+        Ok -- no --> Offline["Offline report:<br/>error reason only"]
     end
+
+    Online --> Reset
+
+    subgraph S2["Step 2: cumulative to interval (IntervalTracker)"]
+        Reset{"Counter smaller than last round?<br/>i.e. agent restarted"}
+        Reset -- yes --> Zero["Previous baseline = 0"]
+        Reset -- no --> Delta
+        Zero --> Delta["delta = current - previous<br/>pps = delta packets / delta time"]
+        Delta --> Save["Remember current values<br/>as baseline for next round"]
+    end
+
+    Save --> Sum
+    Offline --> Sum
+
+    subgraph S3["Step 3: detect attacks (DistributedAggregator)"]
+        Sum["Sum interval deltas of all online agents"] --> C1 & C2 & C3
+        C1{"C1 SYN flood:<br/>SYN rate at least --syn-threshold<br/>and SYN-ACK/SYN at most --syn-ack-ratio"}
+        C2{"C2 volumetric:<br/>pps at least --pps-threshold<br/>and UDP or ICMP share at least --proto-share"}
+        C3{"C3 target concentration:<br/>pps at least --pps-threshold<br/>and one port share at least --port-share"}
+        C1 & C2 & C3 -- "yes, seen by at least --min-agents agents" --> Alert["Distributed alert"]
+    end
+
+    Alert --> Out
+    C1 & C2 & C3 -- no --> Out
+    Out["Print round to console, append CSV row"] --> Start
 ```
 
 ---
