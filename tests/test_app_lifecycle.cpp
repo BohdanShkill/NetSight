@@ -490,6 +490,7 @@ TEST(AppLifecycleTest, AggregateDetectsSubThresholdDistributedSynFloodEndToEnd) 
         "--syn-threshold", "100.0",
         "--rounds", "1",
         "--interval", "0.2",
+        "--timeout-ms", "50",
         "--csv", csv_out.string()
     }, env);
 
@@ -539,7 +540,8 @@ TEST(AppLifecycleTest, AggregateToleratesPartialAgentOutageAndFailsWhenAllOfflin
             "--agent", ep2,
             "--agent", "127.0.0.1:1",
             "--rounds", "1",
-            "--interval", "0.2"
+            "--interval", "0.2",
+            "--timeout-ms", "50"
         }, env);
 
         EXPECT_EQ(rc, ExitCode::Ok);
@@ -560,10 +562,58 @@ TEST(AppLifecycleTest, AggregateToleratesPartialAgentOutageAndFailsWhenAllOfflin
             "aggregate",
             "--agent", "127.0.0.1:1",
             "--rounds", "1",
-            "--interval", "0.2"
+            "--interval", "0.2",
+            "--timeout-ms", "50"
         }, env);
 
         EXPECT_EQ(rc, ExitCode::RuntimeError);
         EXPECT_FALSE(err.str().empty());
     }
+}
+
+TEST(AppLifecycleTest, AggregateWorstCaseDurationEmitsWarningToStderr) {
+    auto snap = std::make_shared<StatsSnapshot>();
+    snap->total_packets = 10;
+    snap->total_wire_bytes = 1000;
+
+    RestConfig rcfg{};
+    rcfg.host = "127.0.0.1";
+    rcfg.port = 0;
+
+    RestServer srv1(rcfg, [snap]() { return snap; });
+    RestServer srv2(rcfg, [snap]() { return snap; });
+    RestServer srv3(rcfg, [snap]() { return snap; });
+
+    std::string err1, err2, err3;
+    ASSERT_TRUE(srv1.start(err1));
+    ASSERT_TRUE(srv2.start(err2));
+    ASSERT_TRUE(srv3.start(err3));
+
+    const std::string ep1 = "127.0.0.1:" + std::to_string(srv1.bound_port());
+    const std::string ep2 = "127.0.0.1:" + std::to_string(srv2.bound_port());
+    const std::string ep3 = "127.0.0.1:" + std::to_string(srv3.bound_port());
+
+    std::istringstream in;
+    std::ostringstream out;
+    std::ostringstream err;
+    AppEnv env{in, out, err};
+
+    const auto rc = run_netsight({
+        "aggregate",
+        "--agent", ep1,
+        "--agent", ep2,
+        "--agent", ep3,
+        "--interval", "0.5",
+        "--timeout-ms", "1000",
+        "--rounds", "1"
+    }, env);
+
+    srv1.stop();
+    srv2.stop();
+    srv3.stop();
+
+    EXPECT_EQ(rc, ExitCode::Ok);
+    EXPECT_NE(err.str().find("Warning: worst-case round duration"), std::string::npos);
+    EXPECT_NE(err.str().find("2000 ms"), std::string::npos);
+    EXPECT_NE(err.str().find("500 ms"), std::string::npos);
 }
