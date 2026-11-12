@@ -23,8 +23,10 @@ TEST(DistributedAggregatorTest, EmptyReportsProducesZeroedSnapshot) {
 
     EXPECT_EQ(snap.total_agents, 0u);
     EXPECT_EQ(snap.online_agents, 0u);
+    EXPECT_EQ(snap.interval_agents, 0u);
     EXPECT_EQ(snap.total_packets, 0u);
     EXPECT_EQ(snap.total_wire_bytes, 0u);
+    EXPECT_EQ(snap.interval_packets, 0u);
     EXPECT_DOUBLE_EQ(snap.global_pps, 0.0);
     EXPECT_DOUBLE_EQ(snap.global_bps, 0.0);
     EXPECT_TRUE(snap.merged_top_talkers.empty());
@@ -49,6 +51,7 @@ TEST(DistributedAggregatorTest, AllOfflineAgentsProducesZeroedMetricsWithCorrect
 
     EXPECT_EQ(snap.total_agents, 2u);
     EXPECT_EQ(snap.online_agents, 0u);
+    EXPECT_EQ(snap.interval_agents, 0u);
     EXPECT_EQ(snap.total_packets, 0u);
     EXPECT_TRUE(snap.alerts.empty());
 }
@@ -169,23 +172,29 @@ TEST(DistributedAggregatorTest, DistributedVolumetricUdpFloodTriggersAlert) {
 
     AgentMetricsReport a1{};
     a1.agent_id = "a1";
+    a1.online = true;
     a1.total_packets = 300;
-    a1.pps = 300.0;
-    a1.udp_packets = 255;
-    a1.tcp_packets = 45;
+    a1.interval.valid = true;
+    a1.interval.packets = 300;
+    a1.interval.pps = 300.0;
+    a1.interval.udp = 255;
+    a1.interval.tcp = 45;
 
     AgentMetricsReport a2{};
     a2.agent_id = "a2";
+    a2.online = true;
     a2.total_packets = 300;
-    a2.pps = 300.0;
-    a2.udp_packets = 255;
-    a2.tcp_packets = 45;
+    a2.interval.valid = true;
+    a2.interval.packets = 300;
+    a2.interval.pps = 300.0;
+    a2.interval.udp = 255;
+    a2.interval.tcp = 45;
 
     const auto snap = agg.aggregate({a1, a2});
 
     EXPECT_DOUBLE_EQ(snap.global_pps, 600.0);
-    EXPECT_EQ(snap.udp_packets, 510u);
-    EXPECT_EQ(snap.total_packets, 600u);
+    EXPECT_EQ(snap.interval_udp, 510u);
+    EXPECT_EQ(snap.interval_packets, 600u);
 
     ASSERT_EQ(snap.alerts.size(), 1u);
     const auto& al = snap.alerts[0];
@@ -205,15 +214,21 @@ TEST(DistributedAggregatorTest, DistributedVolumetricIcmpFloodTriggersAlert) {
 
     AgentMetricsReport a1{};
     a1.agent_id = "a1";
+    a1.online = true;
     a1.total_packets = 400;
-    a1.pps = 400.0;
-    a1.icmp_packets = 350;
+    a1.interval.valid = true;
+    a1.interval.packets = 400;
+    a1.interval.pps = 400.0;
+    a1.interval.icmp = 350;
 
     AgentMetricsReport a2{};
     a2.agent_id = "a2";
+    a2.online = true;
     a2.total_packets = 400;
-    a2.pps = 400.0;
-    a2.icmp_packets = 350;
+    a2.interval.valid = true;
+    a2.interval.packets = 400;
+    a2.interval.pps = 400.0;
+    a2.interval.icmp = 350;
 
     const auto snap = agg.aggregate({a1, a2});
 
@@ -231,15 +246,23 @@ TEST(DistributedAggregatorTest, DistributedTargetPortConcentrationTriggersAlert)
 
     AgentMetricsReport a1{};
     a1.agent_id = "a1";
+    a1.online = true;
     a1.total_packets = 400;
-    a1.pps = 400.0;
     a1.top_ports = {PortEntry{80, 260, 26000}, PortEntry{443, 140, 14000}};
+    a1.interval.valid = true;
+    a1.interval.packets = 400;
+    a1.interval.pps = 400.0;
+    a1.interval.port_deltas = {PortEntry{80, 260, 26000}, PortEntry{443, 140, 14000}};
 
     AgentMetricsReport a2{};
     a2.agent_id = "a2";
+    a2.online = true;
     a2.total_packets = 400;
-    a2.pps = 400.0;
     a2.top_ports = {PortEntry{80, 260, 26000}, PortEntry{443, 140, 14000}};
+    a2.interval.valid = true;
+    a2.interval.packets = 400;
+    a2.interval.pps = 400.0;
+    a2.interval.port_deltas = {PortEntry{80, 260, 26000}, PortEntry{443, 140, 14000}};
 
     const auto snap = agg.aggregate({a1, a2});
 
@@ -324,6 +347,168 @@ TEST(DistributedAggregatorTest, PartialAgentOutageContinuesEvaluatingOnlineAgent
 
     EXPECT_EQ(snap.total_agents, 3u);
     EXPECT_EQ(snap.online_agents, 2u);
+    ASSERT_EQ(snap.alerts.size(), 1u);
+    EXPECT_EQ(snap.alerts[0].contributing_agents, 2u);
+    EXPECT_DOUBLE_EQ(snap.alerts[0].combined_rate_pps, 120.0);
+}
+
+TEST(DistributedAggregatorTest, SpikeAfterQuietPeriodTriggersVolumetricAlert) {
+    DistributedAggregatorConfig cfg{};
+    cfg.min_agents = 2;
+    cfg.global_volumetric_pps_threshold = 500.0;
+    cfg.protocol_dominance_ratio = 0.70;
+    DistributedAggregator agg{cfg};
+
+    AgentMetricsReport a1{};
+    a1.agent_id = "a1";
+    a1.online = true;
+    a1.total_packets = 37600;
+    a1.pps = 10.4;
+    a1.interval.valid = true;
+    a1.interval.pps = 800.0;
+    a1.interval.packets = 1600;
+    a1.interval.udp = 1500;
+
+    AgentMetricsReport a2{};
+    a2.agent_id = "a2";
+    a2.online = true;
+    a2.total_packets = 37600;
+    a2.pps = 10.4;
+    a2.interval.valid = true;
+    a2.interval.pps = 800.0;
+    a2.interval.packets = 1600;
+    a2.interval.udp = 1500;
+
+    const auto snap = agg.aggregate({a1, a2});
+
+    EXPECT_DOUBLE_EQ(snap.global_pps, 1600.0);
+    EXPECT_EQ(snap.interval_packets, 3200u);
+    EXPECT_EQ(snap.interval_udp, 3000u);
+
+    ASSERT_EQ(snap.alerts.size(), 1u);
+    EXPECT_EQ(snap.alerts[0].type, DistributedAlertType::DistributedVolumetricFlood);
+    EXPECT_DOUBLE_EQ(snap.alerts[0].combined_rate_pps, 1600.0);
+    EXPECT_DOUBLE_EQ(snap.alerts[0].metric_ratio, 3000.0 / 3200.0);
+}
+
+TEST(DistributedAggregatorTest, EndedAttackWithHighCumulativeUdpDoesNotTriggerAlert) {
+    DistributedAggregatorConfig cfg{};
+    cfg.min_agents = 2;
+    cfg.global_volumetric_pps_threshold = 500.0;
+    cfg.protocol_dominance_ratio = 0.70;
+    DistributedAggregator agg{cfg};
+
+    AgentMetricsReport a1{};
+    a1.agent_id = "a1";
+    a1.online = true;
+    a1.total_packets = 50000;
+    a1.udp_packets = 40000;
+    a1.interval.valid = true;
+    a1.interval.pps = 10.0;
+    a1.interval.packets = 20;
+    a1.interval.udp = 2;
+
+    AgentMetricsReport a2{};
+    a2.agent_id = "a2";
+    a2.online = true;
+    a2.total_packets = 50000;
+    a2.udp_packets = 40000;
+    a2.interval.valid = true;
+    a2.interval.pps = 10.0;
+    a2.interval.packets = 20;
+    a2.interval.udp = 2;
+
+    const auto snap = agg.aggregate({a1, a2});
+
+    EXPECT_DOUBLE_EQ(snap.global_pps, 20.0);
+    EXPECT_TRUE(snap.alerts.empty());
+}
+
+TEST(DistributedAggregatorTest, DnsWitnessNotCountedIfZeroIntervalUdp) {
+    DistributedAggregatorConfig cfg{};
+    cfg.min_agents = 2;
+    cfg.global_volumetric_pps_threshold = 500.0;
+    cfg.protocol_dominance_ratio = 0.70;
+    DistributedAggregator agg{cfg};
+
+    AgentMetricsReport a1{};
+    a1.agent_id = "a1";
+    a1.online = true;
+    a1.interval.valid = true;
+    a1.interval.pps = 600.0;
+    a1.interval.packets = 600;
+    a1.interval.udp = 550;
+
+    AgentMetricsReport a2{};
+    a2.agent_id = "a2";
+    a2.online = true;
+    a2.udp_packets = 50;
+    a2.interval.valid = true;
+    a2.interval.pps = 100.0;
+    a2.interval.packets = 100;
+    a2.interval.udp = 0;
+
+    const auto snap = agg.aggregate({a1, a2});
+
+    EXPECT_TRUE(snap.alerts.empty());
+}
+
+TEST(DistributedAggregatorTest, InvalidIntervalAgentIncludedInOnlineNotInterval) {
+    DistributedAggregatorConfig cfg{};
+    DistributedAggregator agg{cfg};
+
+    AgentMetricsReport a1{};
+    a1.agent_id = "a1";
+    a1.online = true;
+    a1.total_packets = 100;
+    a1.interval.valid = true;
+    a1.interval.pps = 50.0;
+    a1.interval.bps = 5000.0;
+    a1.interval.packets = 100;
+
+    AgentMetricsReport a2{};
+    a2.agent_id = "a2";
+    a2.online = true;
+    a2.total_packets = 200;
+    a2.interval.valid = false;
+    a2.interval.pps = 999.0;
+    a2.interval.packets = 200;
+
+    const auto snap = agg.aggregate({a1, a2});
+
+    EXPECT_EQ(snap.total_agents, 2u);
+    EXPECT_EQ(snap.online_agents, 2u);
+    EXPECT_EQ(snap.interval_agents, 1u);
+    EXPECT_EQ(snap.total_packets, 300u);
+    EXPECT_EQ(snap.interval_packets, 100u);
+    EXPECT_DOUBLE_EQ(snap.global_pps, 50.0);
+    EXPECT_DOUBLE_EQ(snap.global_bps, 5000.0);
+}
+
+TEST(DistributedAggregatorTest, SameFlowSeenByTwoAgentsIsCountedTwice_DocumentedAssumption) {
+    DistributedAggregatorConfig cfg{};
+    cfg.min_agents = 2;
+    cfg.global_syn_pps_threshold = 100.0;
+    cfg.max_syn_ack_ratio = 0.25;
+    DistributedAggregator agg{cfg};
+
+    const auto victim_ip = make_ip(192, 168, 1, 100);
+    const uint16_t victim_port = 80;
+
+    SynTargetEntry target{victim_ip, victim_port, 60, 2, 60.0};
+
+    AgentMetricsReport a1{};
+    a1.agent_id = "agent_tap1";
+    a1.online = true;
+    a1.syn_targets = {target};
+
+    AgentMetricsReport a2{};
+    a2.agent_id = "agent_tap2";
+    a2.online = true;
+    a2.syn_targets = {target};
+
+    const auto snap = agg.aggregate({a1, a2});
+
     ASSERT_EQ(snap.alerts.size(), 1u);
     EXPECT_EQ(snap.alerts[0].contributing_agents, 2u);
     EXPECT_DOUBLE_EQ(snap.alerts[0].combined_rate_pps, 120.0);

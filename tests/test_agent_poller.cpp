@@ -5,9 +5,15 @@
 
 #include <gtest/gtest.h>
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <httplib.h>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 
 using namespace netsight;
 
@@ -236,4 +242,126 @@ TEST(AgentPollerTest, PollAllReturnsReportsForMultipleAgents) {
     EXPECT_EQ(reports[1].error_message, "Connection failed");
 
     server.stop();
+}
+
+TEST(AgentPollerTest, PollAllParallelExecutesFasterThanSequentialOnHangingServers) {
+    httplib::Server svr;
+    std::mutex cv_m;
+    std::condition_variable cv;
+    std::atomic<bool> release_server{false};
+
+    svr.Get("/api/v1/stats", [&](const httplib::Request&, httplib::Response&) {
+        std::unique_lock<std::mutex> lock(cv_m);
+        cv.wait_for(lock, std::chrono::milliseconds(2000), [&]() {
+            return release_server.load();
+        });
+    });
+
+    const int port = svr.bind_to_any_port("127.0.0.1");
+    ASSERT_GT(port, 0);
+
+    std::thread svr_thread([&]() {
+        svr.listen_after_bind();
+    });
+
+    AgentPollerConfig cfg{};
+    cfg.timeout_ms = 300;
+    cfg.max_parallel = 8;
+    AgentPoller poller{cfg};
+
+    const std::string ep = "127.0.0.1:" + std::to_string(port);
+    const std::vector<std::string> endpoints = {ep, ep, ep, ep, ep};
+
+    const auto t_start = std::chrono::steady_clock::now();
+    const auto reports = poller.poll_all(endpoints);
+    const auto t_end = std::chrono::steady_clock::now();
+
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+
+    release_server.store(true);
+    cv.notify_all();
+    svr.stop();
+    if (svr_thread.joinable()) {
+        svr_thread.join();
+    }
+
+    ASSERT_EQ(reports.size(), 5u);
+    for (std::size_t i = 0; i < 5u; ++i) {
+        EXPECT_FALSE(reports[i].online);
+        EXPECT_EQ(reports[i].error_message, "Connection failed");
+    }
+
+    EXPECT_LT(elapsed_ms, 1200);
+}
+
+TEST(AgentPollerTest, PollAllPreservesEndpointOrderEvenWithFailures) {
+    auto snap = std::make_shared<StatsSnapshot>();
+    snap->total_packets = 100;
+
+    RestConfig cfg1{};
+    cfg1.host = "127.0.0.1";
+    cfg1.port = 0;
+    RestServer srv1(cfg1, [snap]() { return snap; });
+    std::string err;
+    ASSERT_TRUE(srv1.start(err));
+
+    RestConfig cfg2{};
+    cfg2.host = "127.0.0.1";
+    cfg2.port = 0;
+    RestServer srv2(cfg2, [snap]() { return snap; });
+    ASSERT_TRUE(srv2.start(err));
+
+    const std::string ep1 = "127.0.0.1:" + std::to_string(srv1.bound_port());
+    const std::string ep2 = "127.0.0.1:49997";
+    const std::string ep3 = "127.0.0.1:" + std::to_string(srv2.bound_port());
+
+    AgentPollerConfig poller_cfg{};
+    poller_cfg.timeout_ms = 500;
+    AgentPoller poller{poller_cfg};
+
+    const auto reports = poller.poll_all({ep1, ep2, ep3});
+
+    ASSERT_EQ(reports.size(), 3u);
+    EXPECT_EQ(reports[0].agent_id, ep1);
+    EXPECT_TRUE(reports[0].online);
+
+    EXPECT_EQ(reports[1].agent_id, ep2);
+    EXPECT_FALSE(reports[1].online);
+
+    EXPECT_EQ(reports[2].agent_id, ep3);
+    EXPECT_TRUE(reports[2].online);
+
+    srv1.stop();
+    srv2.stop();
+}
+
+TEST(AgentPollerTest, PollAgentRejectsResponseExceedingMaxBodyBytes) {
+    httplib::Server svr;
+    const std::string large_body(5000, 'A');
+
+    svr.Get("/api/v1/stats", [&](const httplib::Request&, httplib::Response& res) {
+        res.set_content(large_body, "application/json");
+    });
+
+    const int port = svr.bind_to_any_port("127.0.0.1");
+    ASSERT_GT(port, 0);
+
+    std::thread svr_thread([&]() {
+        svr.listen_after_bind();
+    });
+
+    AgentPollerConfig cfg{};
+    cfg.timeout_ms = 1000;
+    cfg.max_body_bytes = 1024;
+    AgentPoller poller{cfg};
+
+    const auto report = poller.poll_agent("127.0.0.1:" + std::to_string(port));
+
+    svr.stop();
+    if (svr_thread.joinable()) {
+        svr_thread.join();
+    }
+
+    EXPECT_FALSE(report.online);
+    EXPECT_EQ(report.error_message, "Response too large");
 }

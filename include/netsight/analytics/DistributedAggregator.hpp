@@ -69,11 +69,27 @@ struct DistributedAlert {
     }
 };
 
+struct IntervalMetrics {
+    bool valid{false};
+    bool counter_reset{false};
+    double seconds{0.0};
+    std::uint64_t packets{0};
+    std::uint64_t wire_bytes{0};
+    std::uint64_t tcp{0};
+    std::uint64_t udp{0};
+    std::uint64_t icmp{0};
+    std::uint64_t other{0};
+    double pps{0.0};
+    double bps{0.0};
+    std::vector<PortEntry> port_deltas{};
+};
+
 struct AgentMetricsReport {
     std::string agent_id{};
     bool online{true};
     std::string error_message{};
 
+    double capture_duration_seconds{0.0};
     std::uint64_t total_packets{0};
     std::uint64_t total_wire_bytes{0};
     double pps{0.0};
@@ -88,6 +104,8 @@ struct AgentMetricsReport {
     std::vector<PortEntry> top_ports{};
     std::vector<SynTargetEntry> syn_targets{};
     std::size_t active_alerts_count{0};
+
+    IntervalMetrics interval{};
 };
 
 struct DistributedAggregatorConfig {
@@ -103,8 +121,10 @@ struct DistributedAggregatorConfig {
 struct GlobalNetworkSnapshot {
     std::size_t total_agents{0};
     std::size_t online_agents{0};
+    std::size_t interval_agents{0};
     std::uint64_t total_packets{0};
     std::uint64_t total_wire_bytes{0};
+    std::uint64_t interval_packets{0};
     double global_pps{0.0};
     double global_bps{0.0};
 
@@ -112,6 +132,9 @@ struct GlobalNetworkSnapshot {
     std::uint64_t udp_packets{0};
     std::uint64_t icmp_packets{0};
     std::uint64_t other_packets{0};
+
+    std::uint64_t interval_udp{0};
+    std::uint64_t interval_icmp{0};
 
     std::vector<TalkerEntry> merged_top_talkers{};
     std::vector<PortEntry> merged_top_ports{};

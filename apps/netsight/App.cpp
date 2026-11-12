@@ -1,6 +1,7 @@
 #include "App.hpp"
 
 #include "netsight/analytics/DistributedAggregator.hpp"
+#include "netsight/analytics/IntervalTracker.hpp"
 #include "netsight/analytics/TrafficAnalyzer.hpp"
 #include "netsight/capture/PcapLiveSource.hpp"
 #include "netsight/core/Time.hpp"
@@ -580,14 +581,29 @@ ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
     agg_cfg.min_agents = opts.min_agents;
     agg_cfg.global_syn_pps_threshold = opts.syn_threshold;
     agg_cfg.global_volumetric_pps_threshold = opts.pps_threshold;
+    agg_cfg.max_syn_ack_ratio = opts.syn_ack_ratio;
+    agg_cfg.protocol_dominance_ratio = opts.proto_share;
+    agg_cfg.target_port_concentration_ratio = opts.port_share;
 
     DistributedAggregator aggregator{agg_cfg};
+    IntervalTracker tracker{opts.agents.size()};
 
     AgentPollerConfig poller_cfg{};
-    poller_cfg.timeout_ms = static_cast<std::uint32_t>(std::clamp(opts.interval_seconds * 1000.0, 100.0, 5000.0));
+    poller_cfg.timeout_ms = opts.timeout_ms;
     poller_cfg.api_token = opts.api_token;
 
     AgentPoller poller{poller_cfg};
+
+    const std::size_t k = opts.agents.size();
+    const std::size_t c = poller.config().max_parallel == 0 ? 1 : poller.config().max_parallel;
+    const std::uint64_t waves = (k == 0) ? 0 : ((k + c - 1) / c);
+    const std::uint64_t worst_ms = waves * 2ULL * static_cast<std::uint64_t>(opts.timeout_ms);
+    const double interval_ms = opts.interval_seconds * 1000.0;
+
+    if (static_cast<double>(worst_ms) > interval_ms) {
+        env.err << "Warning: worst-case round duration (" << worst_ms << " ms) exceeds poll interval ("
+                << static_cast<std::uint64_t>(interval_ms) << " ms)\n";
+    }
 
     std::ofstream csv_file;
     if (opts.csv_file.has_value()) {
@@ -596,7 +612,7 @@ ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
             env.err << "Error: failed to open CSV output file: " << *opts.csv_file << '\n';
             return ExitCode::RuntimeError;
         }
-        csv_file << "round,online_agents,total_agents,total_packets,total_wire_bytes,global_pps,global_bps,tcp_packets,udp_packets,icmp_packets,other_packets,active_alerts\n";
+        csv_file << "round,online_agents,total_agents,total_packets,total_wire_bytes,global_pps,global_bps,tcp_packets,udp_packets,icmp_packets,other_packets,active_alerts,interval_packets,interval_agents\n";
         csv_file.flush();
     }
 
@@ -615,6 +631,7 @@ ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
 
         ++current_round;
         auto reports = poller.poll_all(opts.agents);
+        tracker.annotate(reports);
         last_snapshot = aggregator.aggregate(reports);
         total_online_across_rounds += last_snapshot.online_agents;
 
@@ -630,7 +647,9 @@ ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
                      << last_snapshot.udp_packets << ','
                      << last_snapshot.icmp_packets << ','
                      << last_snapshot.other_packets << ','
-                     << last_snapshot.alerts.size() << '\n';
+                     << last_snapshot.alerts.size() << ','
+                     << last_snapshot.interval_packets << ','
+                     << last_snapshot.interval_agents << '\n';
             csv_file.flush();
         }
 

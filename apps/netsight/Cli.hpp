@@ -47,10 +47,14 @@ struct AggregateCliOptions {
     std::vector<std::string> agents{};
     std::string api_token{};
     double interval_seconds{1.0};
+    std::uint32_t timeout_ms{1000};
     std::uint64_t rounds{0};
     std::size_t min_agents{2};
     double syn_threshold{100.0};
     double pps_threshold{500.0};
+    double syn_ack_ratio{0.25};
+    double proto_share{0.70};
+    double port_share{0.60};
     std::optional<std::string> csv_file{};
     bool quiet{false};
 };

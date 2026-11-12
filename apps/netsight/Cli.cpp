@@ -67,9 +67,9 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
                             ->excludes(opt_file);
 
     int snaplen_val = 65535;
-    auto* opt_snaplen = cap_cmd->add_option("--snaplen", snaplen_val, "Snapshot length in bytes (64..262144)")
-                               ->check(CLI::Range(64, 262144))
-                               ->excludes(opt_file);
+    cap_cmd->add_option("--snaplen", snaplen_val, "Snapshot length in bytes (64..262144)")
+           ->check(CLI::Range(64, 262144))
+           ->excludes(opt_file);
 
     bool no_promisc = false;
     cap_cmd->add_flag("--no-promisc", no_promisc, "Disable promiscuous mode")
@@ -123,6 +123,10 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
     double agg_interval_val = 1.0;
     auto* opt_agg_interval = agg_cmd->add_option("--interval", agg_interval_val, "Interval in seconds between polling rounds (> 0.0)");
 
+    std::uint32_t agg_timeout_ms_val = 1000;
+    agg_cmd->add_option("--timeout-ms", agg_timeout_ms_val, "Timeout in milliseconds for agent HTTP polling (50..60000)")
+           ->check(CLI::Range(std::uint32_t{50}, std::uint32_t{60000}));
+
     std::int64_t agg_rounds_val = 0;
     agg_cmd->add_option("--rounds", agg_rounds_val, "Number of polling rounds (0 = run indefinitely)")
            ->check(CLI::Range(std::int64_t{0}, std::numeric_limits<std::int64_t>::max()));
@@ -136,6 +140,18 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
 
     double agg_pps_thresh_val = 500.0;
     auto* opt_agg_pps = agg_cmd->add_option("--pps-threshold", agg_pps_thresh_val, "Global volumetric threshold in packets/s (> 0.0)");
+
+    double agg_syn_ack_ratio_val = 0.25;
+    auto* opt_agg_syn_ack = agg_cmd->add_option("--syn-ack-ratio", agg_syn_ack_ratio_val, "Maximum SYN/ACK ratio threshold (0.0 < ratio <= 1.0)")
+                                    ->check(CLI::Range(0.0, 1.0));
+
+    double agg_proto_share_val = 0.70;
+    auto* opt_agg_proto_share = agg_cmd->add_option("--proto-share", agg_proto_share_val, "Dominant protocol share threshold (0.0 < share <= 1.0)")
+                                        ->check(CLI::Range(0.0, 1.0));
+
+    double agg_port_share_val = 0.60;
+    auto* opt_agg_port_share = agg_cmd->add_option("--port-share", agg_port_share_val, "Target port concentration share threshold (0.0 < share <= 1.0)")
+                                       ->check(CLI::Range(0.0, 1.0));
 
     std::string agg_csv_val;
     auto* opt_agg_csv = agg_cmd->add_option("--csv", agg_csv_val, "Path to output CSV file for recording global metrics per round");
@@ -163,23 +179,19 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
         if (opt_iface->count() > 0) {
             opts.interface_arg = interface_arg_val;
         }
+
         if (opt_file->count() > 0) {
             opts.read_file = read_file_val;
         }
-        if (opt_bpf->count() > 0) {
-            opts.bpf_filter = bpf_filter_val;
-        }
-        if (opt_snaplen->count() > 0) {
-            opts.snaplen = static_cast<std::uint32_t>(snaplen_val);
-        }
-        if (no_promisc) {
-            opts.promiscuous = false;
-        }
+
+        opts.bpf_filter = bpf_filter_val;
+        opts.snaplen = static_cast<std::uint32_t>(snaplen_val);
+        opts.promiscuous = !no_promisc;
 
         if (opt_f_ip->count() > 0) {
             auto parsed_ip = parse_ip_address(filter_ip_raw_val);
             if (!parsed_ip.has_value()) {
-                err << "Error: invalid IP address for --filter-ip: " << filter_ip_raw_val << '\n';
+                err << "Error: invalid IP address filter: " << filter_ip_raw_val << '\n';
                 return {ExitCode::UsageError, CommandKind::None, {}, {}};
             }
             opts.filter_ip = parsed_ip;
@@ -261,6 +273,27 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
             }
         }
 
+        if (opt_agg_syn_ack->count() > 0) {
+            if (!std::isfinite(agg_syn_ack_ratio_val) || agg_syn_ack_ratio_val <= 0.0) {
+                err << "Error: --syn-ack-ratio must be greater than 0.0\n";
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
+            }
+        }
+
+        if (opt_agg_proto_share->count() > 0) {
+            if (!std::isfinite(agg_proto_share_val) || agg_proto_share_val <= 0.0) {
+                err << "Error: --proto-share must be greater than 0.0\n";
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
+            }
+        }
+
+        if (opt_agg_port_share->count() > 0) {
+            if (!std::isfinite(agg_port_share_val) || agg_port_share_val <= 0.0) {
+                err << "Error: --port-share must be greater than 0.0\n";
+                return {ExitCode::UsageError, CommandKind::None, {}, {}};
+            }
+        }
+
         if (opt_agg_csv->count() > 0) {
             if (agg_csv_val.empty()) {
                 err << "Error: --csv file path cannot be empty\n";
@@ -272,10 +305,14 @@ CliParseResult parse_cli(int argc, const char* const* argv, std::ostream& out, s
         opts.agents = std::move(agg_agents_val);
         opts.api_token = agg_token_val;
         opts.interval_seconds = agg_interval_val;
+        opts.timeout_ms = agg_timeout_ms_val;
         opts.rounds = static_cast<std::uint64_t>(agg_rounds_val);
         opts.min_agents = static_cast<std::size_t>(agg_min_agents_val);
         opts.syn_threshold = agg_syn_thresh_val;
         opts.pps_threshold = agg_pps_thresh_val;
+        opts.syn_ack_ratio = agg_syn_ack_ratio_val;
+        opts.proto_share = agg_proto_share_val;
+        opts.port_share = agg_port_share_val;
         if (opt_agg_csv->count() > 0) {
             opts.csv_file = agg_csv_val;
         }

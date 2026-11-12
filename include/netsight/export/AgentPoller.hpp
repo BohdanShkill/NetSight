@@ -2,6 +2,7 @@
 
 #include "netsight/analytics/DistributedAggregator.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -12,6 +13,8 @@ namespace netsight {
 struct AgentPollerConfig {
     std::uint32_t timeout_ms{1000};
     std::string api_token{};
+    std::size_t max_parallel{8};
+    std::size_t max_body_bytes{1024 * 1024};
 };
 
 class AgentPoller {
