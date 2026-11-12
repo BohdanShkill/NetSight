@@ -258,7 +258,19 @@ TEST(CliTest, AggregateSubcommandRequiresAtLeastOneAgentAndValidatesFormat) {
              {"aggregate", "--agent", "127.0.0.1:18081", "--pps-threshold", "-10"},
              {"aggregate", "--agent", "127.0.0.1:18081", "--timeout-ms", "0"},
              {"aggregate", "--agent", "127.0.0.1:18081", "--timeout-ms", "10"},
-             {"aggregate", "--agent", "127.0.0.1:18081", "--timeout-ms", "70000"}}) {
+             {"aggregate", "--agent", "127.0.0.1:18081", "--timeout-ms", "70000"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--syn-ack-ratio", "0"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--syn-ack-ratio", "-0.1"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--syn-ack-ratio", "1.5"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--syn-ack-ratio", "abc"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--proto-share", "0"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--proto-share", "-0.5"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--proto-share", "1.2"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--proto-share", "xyz"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--port-share", "0"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--port-share", "-0.1"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--port-share", "1.5"},
+             {"aggregate", "--agent", "127.0.0.1:18081", "--port-share", "bad"}}) {
         std::ostringstream out;
         std::ostringstream err;
         auto res = parse_cli(args, out, err);
@@ -280,6 +292,9 @@ TEST(CliTest, FullValidAggregateSubcommandFlags) {
                           "--min-agents", "3",
                           "--syn-threshold", "150.0",
                           "--pps-threshold", "800.0",
+                          "--syn-ack-ratio", "0.35",
+                          "--proto-share", "0.85",
+                          "--port-share", "0.75",
                           "--csv", "global_metrics.csv",
                           "-q"},
                          out, err);
@@ -295,6 +310,9 @@ TEST(CliTest, FullValidAggregateSubcommandFlags) {
     EXPECT_EQ(res.aggregate.min_agents, 3U);
     EXPECT_DOUBLE_EQ(res.aggregate.syn_threshold, 150.0);
     EXPECT_DOUBLE_EQ(res.aggregate.pps_threshold, 800.0);
+    EXPECT_DOUBLE_EQ(res.aggregate.syn_ack_ratio, 0.35);
+    EXPECT_DOUBLE_EQ(res.aggregate.proto_share, 0.85);
+    EXPECT_DOUBLE_EQ(res.aggregate.port_share, 0.75);
     ASSERT_TRUE(res.aggregate.csv_file.has_value());
     EXPECT_EQ(*res.aggregate.csv_file, "global_metrics.csv");
     EXPECT_TRUE(res.aggregate.quiet);
@@ -306,4 +324,25 @@ TEST(CliTest, AggregateDefaultTimeoutMsIs1000) {
     auto res = parse_cli({"aggregate", "--agent", "127.0.0.1:18081"}, out, err);
     EXPECT_EQ(res.exit_code, ExitCode::Ok);
     EXPECT_EQ(res.aggregate.timeout_ms, 1000U);
+}
+
+TEST(CliTest, AggregateDefaultThresholdsAreCorrect) {
+    std::ostringstream out;
+    std::ostringstream err;
+    auto res = parse_cli({"aggregate", "--agent", "127.0.0.1:18081"}, out, err);
+    EXPECT_EQ(res.exit_code, ExitCode::Ok);
+    EXPECT_DOUBLE_EQ(res.aggregate.syn_ack_ratio, 0.25);
+    EXPECT_DOUBLE_EQ(res.aggregate.proto_share, 0.70);
+    EXPECT_DOUBLE_EQ(res.aggregate.port_share, 0.60);
+}
+
+TEST(CliTest, AggregateHelpContainsNewThresholdDescriptions) {
+    std::ostringstream out;
+    std::ostringstream err;
+    auto res = parse_cli({"aggregate", "--help"}, out, err);
+    EXPECT_EQ(res.exit_code, ExitCode::Ok);
+    EXPECT_EQ(res.command, CommandKind::None);
+    EXPECT_NE(out.str().find("--syn-ack-ratio"), std::string::npos);
+    EXPECT_NE(out.str().find("--proto-share"), std::string::npos);
+    EXPECT_NE(out.str().find("--port-share"), std::string::npos);
 }

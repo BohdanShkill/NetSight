@@ -581,6 +581,9 @@ ExitCode run_aggregate(const AggregateCliOptions& opts, AppEnv& env) {
     agg_cfg.min_agents = opts.min_agents;
     agg_cfg.global_syn_pps_threshold = opts.syn_threshold;
     agg_cfg.global_volumetric_pps_threshold = opts.pps_threshold;
+    agg_cfg.max_syn_ack_ratio = opts.syn_ack_ratio;
+    agg_cfg.protocol_dominance_ratio = opts.proto_share;
+    agg_cfg.target_port_concentration_ratio = opts.port_share;
 
     DistributedAggregator aggregator{agg_cfg};
     IntervalTracker tracker{opts.agents.size()};

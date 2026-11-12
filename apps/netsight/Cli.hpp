@@ -52,6 +52,9 @@ struct AggregateCliOptions {
     std::size_t min_agents{2};
     double syn_threshold{100.0};
     double pps_threshold{500.0};
+    double syn_ack_ratio{0.25};
+    double proto_share{0.70};
+    double port_share{0.60};
     std::optional<std::string> csv_file{};
     bool quiet{false};
 };
