@@ -175,21 +175,21 @@ Streams and replays live network traffic or an offline `.pcap` file.
 
 | Option | Default | Description |
 | :--- | :--- | :--- |
-Live capture interface name or index (mutually exclusive with `-r`) | `-i, --interface <name\|idx>` |
+| `-i, --interface <name\|idx>` | — | Live capture interface name or index (mutually exclusive with `-r`) |
 | `-r, --read-file <path>` | — | Path to offline `.pcap` file (mutually exclusive with `-i`) |
 | `--bpf <expr>` | `""` | BPF filter expression (live capture only; excludes `-r`) |
 | `--snaplen <bytes>` | `65535` | Capture snapshot length (`64..262144`; excludes `-r`) |
-`true, false`: When set to true, disable promiscuous mode (option not used with -r)
-- —— | | — | | Keep parsed packets with the same source or destination address as this IPv4/IPv6 address — | | | | | | |
-| `--filter-port <port>` — | — | | Filter: Only keep packets that are parsed at L4 end points that have a port number of <port> (where 1..65535 are the available port numbers) |
+| `--no-promisc` | `false` | Disable promiscuous mode (excludes `-r`) |
+| `--filter-ip <ip>` | — | Keep only parsed packets whose source or destination matches this IPv4/IPv6 address |
+| `--filter-port <port>` | — | Keep only parsed packets whose source or destination L4 port matches (`1..65535`) |
 | `--duration <sec>` | — | Auto-stop capture after `N` seconds (`> 0.0`) |
 | `--count <packets>` | — | Auto-stop capture after `N` accepted packets (`>= 1`) |
 | `--queue-size <cap>` | `8192` | Internal bounded packet queue capacity (`1..1048576`) |
-Writes <prefix>_timeseries.csv and <prefix>_summary.csv | `--csv <prefix>` | — | Write <prefix>_timeseries.csv and <prefix>_summary.csv
+| `--csv <prefix>` | — | Write `<prefix>_timeseries.csv` and `<prefix>_summary.csv` |
 | `--api-port <port>` | — | Enable embedded REST API server on port (`0..65535`, `0` = ephemeral) |
 | `--api-host <host>` | `127.0.0.1` | Bind host/IP for REST API (requires `--api-port`) |
-`""` | Bearer token for the REST API endpoints (except /api/v1/health | --api-port) |
-`--quiet, -q: false` | suppresses periodic TTY status and final summary |
+| `--api-token <token>` | `""` | Bearer token for REST API endpoints except `/api/v1/health` (requires `--api-port`) |
+| `-q, --quiet` | `false` | Suppress periodic TTY status and final summary |
 
 **Examples:**
 
@@ -212,14 +212,14 @@ If you have multiple Vantage agents on multiple NetSight servers, you can use a 
 | `--interval <sec>` | `1.0` | Polling interval in seconds (`> 0.0`) |
 | `--timeout-ms <ms>` | `1000` | Per-request HTTP connect/read timeout in ms (`50..60000`) |
 | `--rounds <n>` | `0` | Number of polling rounds (`0` = run until `SIGINT` / `SIGTERM`) |
-The minimum number of agents to see a distributed alert (>= 1). | `--min-agents <k>` | `2` | Minimum number of witness agents to see a distributed alert (>= 1). |
+| `--min-agents <k>` | `2` | Minimum number of witness agents required for a distributed alert (`>= 1`) |
 | `--syn-threshold <pps>` | `100.0` | Global distributed SYN flood rate threshold in SYN/s (`> 0.0`) |
 | `--pps-threshold <pps>` | `500.0` | Global volumetric flood threshold in packets/s (`> 0.0`) |
 | `--syn-ack-ratio <ratio>` | `0.25` | Maximum `SYN-ACK / SYN` ratio for SYN flood detection (`(0.0, 1.0]`) |
 | `--proto-share <share>` | `0.70` | Minimum dominant protocol share, `UDP` or `ICMP`-family (`(0.0, 1.0]`) |
 | `--port-share <share>` | `0.60` | Minimum destination port share for target concentration (`(0.0, 1.0]`) |
-— | `--csv <path>` | — | Output per-round global metrics to a CSV file |
-`-q, --quiet` | `false` | Do not print console reports or final summary every so often |
+| `--csv <path>` | — | Write per-round global metrics to a CSV file |
+| `-q, --quiet` | `false` | Suppress periodic console output and the final summary |
 
 > [!NOTE]
 > The maximum number of requests that can be issued is 2xQ per polling round (where Q = 8), with Q = 8 chosen to allow for 4 agents per polling round, and the 2 requests per agent for `/api/v1/stats` and `/api/v1/top-talkers`. The default setting for `--interval` is greater than this bound, so if so, `aggregate` prints a message to `stderr` at startup and continues running.
